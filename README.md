@@ -49,7 +49,7 @@ Audited against AOSP source branches (`android11-release` through `main`) and HM
 
 ## Installation
 
-1. Download **`XHide-v1.0.1-release.apk`** from the [Releases](https://github.com/everyoneexe/XHide/releases/latest) page and install it.
+1. Download **`XHide-v1.0.2-release.apk`** from the [Releases](https://github.com/everyoneexe/XHide/releases/latest) page and install it.
 2. Open **LSPosed** or **Vector Manager**, enable **XHide**, and ensure **`System Framework` (`android`)** is selected in the module scope.
 3. Reboot your device (or soft-restart `system_server`) once to activate the system hook.
 4. Open **XHide** to configure automatic module hiding or toggle visibility for individual applications across any user profile in real time.

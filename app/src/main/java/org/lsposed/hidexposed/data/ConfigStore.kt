@@ -58,7 +58,7 @@ object ConfigStore {
         private set
 
     @Volatile
-    var showSystemApps: Boolean = false
+    var showSystemApps: Boolean = true
         private set
 
     private val whitelistedPackages: MutableSet<String> = ConcurrentHashMap.newKeySet<String>().apply {
@@ -235,7 +235,7 @@ object ConfigStore {
         themeMode = prefs.getString("themeMode", "SYSTEM") ?: "SYSTEM"
         amoledBlack = prefs.getBoolean("amoledBlack", false)
         dynamicColor = prefs.getBoolean("dynamicColor", true)
-        showSystemApps = prefs.getBoolean("showSystemApps", false)
+        showSystemApps = prefs.getBoolean("showSystemApps", true)
 
         val rawWl = prefs.getStringSet("whitelist", setOf(SELF_USER0_KEY)) ?: setOf(SELF_USER0_KEY)
         val wl = rawWl.map { if (it == SELF_PACKAGE) SELF_USER0_KEY else it }.toSet()

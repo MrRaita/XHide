@@ -11,8 +11,8 @@ android {
         applicationId = "org.lsposed.hidexposed"
         minSdk = 30
         targetSdk = 37
-        versionCode = 101
-        versionName = "1.0.1"
+        versionCode = 102
+        versionName = "1.0.2"
     }
 
     buildTypes {

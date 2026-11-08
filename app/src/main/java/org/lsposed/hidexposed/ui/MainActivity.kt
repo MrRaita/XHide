@@ -69,12 +69,16 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -297,6 +301,50 @@ fun MainScreen(
 
     LaunchedEffect(Unit) {
         refreshState()
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshState(showToastOnDone = false)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    DisposableEffect(Unit) {
+        val launcherApps = context.getSystemService(LauncherApps::class.java)
+        val callback = object : LauncherApps.Callback() {
+            override fun onPackageAdded(packageName: String, user: UserHandle) {
+                refreshState(showToastOnDone = false)
+            }
+            override fun onPackageRemoved(packageName: String, user: UserHandle) {
+                refreshState(showToastOnDone = false)
+            }
+            override fun onPackageChanged(packageName: String, user: UserHandle) {
+                refreshState(showToastOnDone = false)
+            }
+            override fun onPackagesAvailable(packageNames: Array<out String>, user: UserHandle, replacing: Boolean) {
+                refreshState(showToastOnDone = false)
+            }
+            override fun onPackagesUnavailable(packageNames: Array<out String>, user: UserHandle, replacing: Boolean) {
+                refreshState(showToastOnDone = false)
+            }
+        }
+        try {
+            launcherApps?.registerCallback(callback)
+        } catch (_: Throwable) {
+        }
+        onDispose {
+            try {
+                launcherApps?.unregisterCallback(callback)
+            } catch (_: Throwable) {
+            }
+        }
     }
 
     fun updateAppHidden(entry: AppEntry, hideInLauncher: Boolean) {
@@ -1451,7 +1499,7 @@ private fun SettingsTabScreen(
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
             CompactInfoRow(
                 title = strings.versionTitle,
-                value = "v1.0.1 (Android 11–17 Multi-User)"
+                value = "v1.0.2 (Android 11–17 Multi-User)"
             )
         }
 
@@ -1643,6 +1691,21 @@ private fun detectDefaultLauncher(context: Context): LauncherInfo? {
     }
 }
 
+private fun getUserIdFromHandle(userHandle: UserHandle?, userManager: UserManager?): Int {
+    if (userHandle == null) return 0
+    return try {
+        val method = UserHandle::class.java.getDeclaredMethod("getIdentifier")
+        method.isAccessible = true
+        (method.invoke(userHandle) as? Int) ?: 0
+    } catch (_: Throwable) {
+        try {
+            userManager?.getSerialNumberForUser(userHandle)?.toInt() ?: 0
+        } catch (_: Throwable) {
+            0
+        }
+    }
+}
+
 private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
     val pm = context.packageManager
     val launcherApps = context.getSystemService(LauncherApps::class.java)
@@ -1661,8 +1724,8 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
 
     val entriesMap = LinkedHashMap<String, AppEntry>()
 
-    // 1. Query all launcher activities across all profiles (User 0, User 10 Clone/Work Profile, etc.)
-    // Query each UserHandle individually first so Android 11 & 12 convertToActivityList preserves each profile's UserHandle.
+    // Query all launcher activities across all profiles (User 0, User 10 Clone/Work Profile, etc.)
+    // Only apps with real launcher activities are included so every entry maps directly to a visible home screen / drawer icon.
     if (launcherApps != null) {
         val allActivities = mutableListOf<android.content.pm.LauncherActivityInfo>()
         for (profile in profiles) {
@@ -1691,7 +1754,7 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
             val pkg = appInfo.packageName ?: continue
             if (pkg == "android" || ModuleCache.KNOWN_MANAGERS.contains(pkg)) continue
 
-            val userId = info.user?.hashCode() ?: 0
+            val userId = getUserIdFromHandle(info.user, userManager)
             val key = ConfigStore.userKey(userId, pkg)
             if (entriesMap.containsKey(key)) continue
 
@@ -1729,44 +1792,6 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
                 isSystemApp = isSystem
             )
         }
-    }
-
-    // 2. Also include any User 0 Xposed modules that might not currently expose a launcher activity
-    val user0Apps = try {
-        pm.getInstalledApplications(PackageManager.GET_META_DATA)
-    } catch (_: Throwable) {
-        emptyList()
-    }
-    for (appInfo in user0Apps) {
-        val pkg = appInfo.packageName ?: continue
-        if (pkg == "android" || ModuleCache.KNOWN_MANAGERS.contains(pkg)) continue
-        val key = ConfigStore.userKey(0, pkg)
-        if (entriesMap.containsKey(key)) continue
-
-        val isXposed = detectIsXposedApp(appInfo, pm)
-        if (!isXposed) continue
-
-        val isSystem = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0 &&
-            (appInfo.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0
-        val label = try {
-            pm.getApplicationLabel(appInfo).toString()
-        } catch (_: Throwable) {
-            pkg
-        }
-        val iconBitmap = try {
-            drawableToImageBitmap(pm.getApplicationIcon(appInfo), 96)
-        } catch (_: Throwable) {
-            null
-        }
-
-        entriesMap[key] = AppEntry(
-            userId = 0,
-            packageName = pkg,
-            label = label,
-            icon = iconBitmap,
-            isXposedModule = true,
-            isSystemApp = isSystem
-        )
     }
 
     return entriesMap.values.sortedWith(
