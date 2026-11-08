@@ -499,13 +499,6 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
         userManager?.userProfiles?.let { profiles.addAll(it) }
     } catch (_: Throwable) {
     }
-    // Probe common Clone / Work / Dual Messenger user IDs (e.g., User 10..15, 95) via public SDK API
-    for (candidateId in listOf(10, 11, 12, 13, 14, 15, 95)) {
-        try {
-            profiles.add(UserHandle.getUserHandleForUid(candidateId * 100000))
-        } catch (_: Throwable) {
-        }
-    }
 
     val entriesMap = LinkedHashMap<String, AppEntry>()
 

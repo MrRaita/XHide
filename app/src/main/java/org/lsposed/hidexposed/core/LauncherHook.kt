@@ -16,14 +16,17 @@ import java.util.ArrayList
 /**
  * System-level hook targeting `com.android.server.pm.LauncherAppsService$LauncherAppsImpl`.
  *
- * Intercepts `getLauncherActivities(String callingPackage, String packageName, UserHandle user)`
- * at the IPC boundary used by all Android launchers (AOSP, One UI, Pixel Launcher, Niagara, Nova,
- * HyperOS, Lawnchair, etc.) across all user profiles (User 0, User 10 Clone/Work Profile, etc.).
+ * Hooks:
+ * 1. `getUserProfiles()` — Ensures our companion UI receives all user profiles on the device
+ *    (User 0, User 10 Clone Profile, Work Profile, Dual Apps, Private Space, Secondary Users).
+ * 2. `canAccessProfile(int, String)` — Grants our companion UI permission to inspect launcher
+ *    activities and badged icons across all profiles without requiring system signature permissions.
+ * 3. `getLauncherActivities(String, String, UserHandle)` — Filters hidden Xposed modules and
+ *    per-user blacklisted apps from all launchers while keeping them visible to Xposed managers.
  */
 object LauncherHook {
     private const val TAG = "HideXposedIcons"
     private const val TARGET_CLASS = "com.android.server.pm.LauncherAppsService\$LauncherAppsImpl"
-    private const val TARGET_METHOD = "getLauncherActivities"
     private const val EXTRA_ALL_USERS_QUERY = "hidexposed_all_users_query"
 
     fun install(classLoader: ClassLoader) {
@@ -34,126 +37,207 @@ object LauncherHook {
                 return
             }
 
+            hookGetUserProfiles(clazz)
+            hookCanAccessProfile(clazz)
+            hookGetLauncherActivities(clazz)
+
+            XposedBridge.log("[$TAG] Successfully installed system hooks on $TARGET_CLASS")
+        } catch (t: Throwable) {
+            XposedBridge.log("[$TAG] Failed to install LauncherHook: ${t.message}")
+        }
+    }
+
+    /**
+     * Hooks `ILauncherApps#getUserProfiles()` so that when `HideXposedIcons` calls
+     * `launcherApps.getProfiles()`, it receives every active UserHandle on the device.
+     */
+    private fun hookGetUserProfiles(clazz: Class<*>) {
+        try {
             XposedHelpers.findAndHookMethod(
                 clazz,
-                TARGET_METHOD,
-                String::class.java,
-                String::class.java,
-                UserHandle::class.java,
+                "getUserProfiles",
                 object : XC_MethodHook() {
-                    override fun beforeHookedMethod(param: MethodHookParam) {
-                        try {
-                            val callingPackage = param.args[0] as? String ?: return
-                            val targetPackage = param.args[1] as? String ?: return
-                            val userHandle = param.args[2] as? UserHandle
-
-                            // Handle zero-lock IPC from our companion UI application
-                            if (callingPackage == ConfigStore.SELF_PACKAGE &&
-                                targetPackage.startsWith(ConfigStore.IPC_PREFIX)
-                            ) {
-                                when {
-                                    targetPackage == ConfigStore.IPC_PING -> {
-                                        param.args[1] = ConfigStore.SELF_PACKAGE
-                                    }
-                                    targetPackage == ConfigStore.IPC_GET_ALL_USERS -> {
-                                        param.setObjectExtra(EXTRA_ALL_USERS_QUERY, true)
-                                        param.args[1] = null
-                                    }
-                                    targetPackage.startsWith(ConfigStore.IPC_UPDATE_PREFIX) -> {
-                                        val payload = targetPackage.removePrefix(ConfigStore.IPC_UPDATE_PREFIX)
-                                        val changedPackages = ConfigStore.applySystemIpcUpdate(payload)
-                                        notifyLaunchersOfChanges(param.thisObject, changedPackages, userHandle)
-                                        param.args[1] = ConfigStore.SELF_PACKAGE
-                                    }
-                                }
-                            }
-                        } catch (t: Throwable) {
-                            XposedBridge.log("[$TAG] Error in beforeHookedMethod: ${t.message}")
-                        }
-                    }
-
                     override fun afterHookedMethod(param: MethodHookParam) {
                         try {
-                            val callingPackage = param.args[0] as? String ?: return
-                            val targetPackage = param.args[1] as? String
-                            val userHandle = param.args[2] as? UserHandle
-                            val userId = getUserId(userHandle)
-
-                            // If our companion UI requested all users' launcher activities, append User 10+ activities
-                            if (callingPackage == ConfigStore.SELF_PACKAGE &&
-                                param.getObjectExtra(EXTRA_ALL_USERS_QUERY) == true
-                            ) {
-                                val slice = param.result ?: return
-                                val baseList = (XposedHelpers.callMethod(slice, "getList") as? List<*>) ?: emptyList<Any>()
-                                val combined = ArrayList<Any>(baseList.filterNotNull())
-                                val profiles = collectAllUserHandles(param.thisObject, userHandle)
-
-                                for (profile in profiles) {
-                                    if (getUserId(profile) == userId) continue
-                                    val extraItems = queryLauncherActivitiesForProfile(param.thisObject, profile)
-                                    for (item in extraItems) {
-                                        if (item != null) combined.add(item)
-                                    }
-                                }
-
-                                param.result = XposedHelpers.newInstance(slice.javaClass, combined)
-                                return
-                            }
-
-                            // Never filter queries coming from core system, our own UI, or Xposed managers
-                            if (callingPackage == "android" ||
-                                callingPackage == ConfigStore.SELF_PACKAGE ||
-                                ModuleCache.KNOWN_MANAGERS.contains(callingPackage)
-                            ) {
-                                return
-                            }
-
-                            val slice = param.result ?: return
-                            val rawList = XposedHelpers.callMethod(slice, "getList") as? List<*> ?: return
-                            if (rawList.isEmpty()) return
-
-                            val context = try {
-                                XposedHelpers.getObjectField(param.thisObject, "mContext") as? Context
-                            } catch (_: Throwable) {
-                                null
-                            }
-
-                            val filteredList = ArrayList<Any>(rawList.size)
-                            var modified = false
-
-                            for (item in rawList) {
-                                if (item == null) continue
-                                val activityInfo = extractActivityInfo(item)
-                                val pkgName = activityInfo?.packageName ?: targetPackage
-
-                                if (!pkgName.isNullOrEmpty()) {
-                                    val isModule = ModuleCache.isXposedModule(
-                                        packageName = pkgName,
-                                        appInfo = activityInfo?.applicationInfo,
-                                        context = context,
-                                        userHandle = userHandle
-                                    )
-                                    if (ConfigStore.shouldHidePackage(pkgName, userId, isModule)) {
-                                        modified = true
-                                        continue
-                                    }
-                                }
-                                filteredList.add(item)
-                            }
-
-                            if (modified) {
-                                param.result = XposedHelpers.newInstance(slice.javaClass, filteredList)
-                            }
+                            if (!isCallerSelfApp(param.thisObject)) return
+                            val existing = (param.result as? List<*>)
+                                ?.filterIsInstance<UserHandle>()
+                                ?: emptyList()
+                            val allHandles = collectAllUserHandles(param.thisObject, null)
+                            val merged = LinkedHashSet<UserHandle>()
+                            merged.addAll(existing)
+                            merged.addAll(allHandles)
+                            param.result = ArrayList(merged)
                         } catch (t: Throwable) {
-                            XposedBridge.log("[$TAG] Fail-safe catch in afterHookedMethod: ${t.message}")
+                            XposedBridge.log("[$TAG] Error in getUserProfiles hook: ${t.message}")
                         }
                     }
                 }
             )
-
-            XposedBridge.log("[$TAG] Successfully installed system hook on $TARGET_CLASS#$TARGET_METHOD")
         } catch (t: Throwable) {
-            XposedBridge.log("[$TAG] Failed to install LauncherHook: ${t.message}")
+            XposedBridge.log("[$TAG] Could not hook getUserProfiles: ${t.message}")
+        }
+    }
+
+    /**
+     * Hooks `LauncherAppsImpl#canAccessProfile(int, String)` so that `HideXposedIcons` can query
+     * `getActivityList(null, userHandle)` and load badged icons for any user ID (User 10, Work,
+     * Private Space, Dual Apps, etc.) without failing cross-profile checks.
+     */
+    private fun hookCanAccessProfile(clazz: Class<*>) {
+        try {
+            XposedHelpers.findAndHookMethod(
+                clazz,
+                "canAccessProfile",
+                Int::class.javaPrimitiveType,
+                String::class.java,
+                object : XC_MethodHook() {
+                    override fun beforeHookedMethod(param: MethodHookParam) {
+                        try {
+                            if (isCallerSelfApp(param.thisObject)) {
+                                param.result = true
+                            }
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
+            )
+        } catch (t: Throwable) {
+            XposedBridge.log("[$TAG] Could not hook canAccessProfile: ${t.message}")
+        }
+    }
+
+    private fun hookGetLauncherActivities(clazz: Class<*>) {
+        XposedHelpers.findAndHookMethod(
+            clazz,
+            "getLauncherActivities",
+            String::class.java,
+            String::class.java,
+            UserHandle::class.java,
+            object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    try {
+                        val callingPackage = param.args[0] as? String ?: return
+                        val targetPackage = param.args[1] as? String ?: return
+                        val userHandle = param.args[2] as? UserHandle
+
+                        // Handle zero-lock IPC from our companion UI application
+                        if (callingPackage == ConfigStore.SELF_PACKAGE &&
+                            targetPackage.startsWith(ConfigStore.IPC_PREFIX)
+                        ) {
+                            when {
+                                targetPackage == ConfigStore.IPC_PING -> {
+                                    param.args[1] = ConfigStore.SELF_PACKAGE
+                                }
+                                targetPackage == ConfigStore.IPC_GET_ALL_USERS -> {
+                                    param.setObjectExtra(EXTRA_ALL_USERS_QUERY, true)
+                                    param.args[1] = null
+                                }
+                                targetPackage.startsWith(ConfigStore.IPC_UPDATE_PREFIX) -> {
+                                    val payload = targetPackage.removePrefix(ConfigStore.IPC_UPDATE_PREFIX)
+                                    val changedPackages = ConfigStore.applySystemIpcUpdate(payload)
+                                    notifyLaunchersOfChanges(param.thisObject, changedPackages, userHandle)
+                                    param.args[1] = ConfigStore.SELF_PACKAGE
+                                }
+                            }
+                        }
+                    } catch (t: Throwable) {
+                        XposedBridge.log("[$TAG] Error in beforeHookedMethod: ${t.message}")
+                    }
+                }
+
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    try {
+                        val callingPackage = param.args[0] as? String ?: return
+                        val targetPackage = param.args[1] as? String
+                        val userHandle = param.args[2] as? UserHandle
+                        val userId = getUserId(userHandle)
+
+                        // If our companion UI requested all users' launcher activities in one call
+                        if (callingPackage == ConfigStore.SELF_PACKAGE &&
+                            param.getObjectExtra(EXTRA_ALL_USERS_QUERY) == true
+                        ) {
+                            val slice = param.result ?: return
+                            val baseList = (XposedHelpers.callMethod(slice, "getList") as? List<*>) ?: emptyList<Any>()
+                            val combined = ArrayList<Any>(baseList.filterNotNull())
+                            val profiles = collectAllUserHandles(param.thisObject, userHandle)
+
+                            for (profile in profiles) {
+                                if (getUserId(profile) == userId) continue
+                                val extraItems = queryLauncherActivitiesForProfile(param.thisObject, profile)
+                                for (item in extraItems) {
+                                    if (item != null) combined.add(item)
+                                }
+                            }
+
+                            param.result = XposedHelpers.newInstance(slice.javaClass, combined)
+                            return
+                        }
+
+                        // Never filter queries coming from core system, our own UI, or Xposed managers
+                        if (callingPackage == "android" ||
+                            callingPackage == ConfigStore.SELF_PACKAGE ||
+                            ModuleCache.KNOWN_MANAGERS.contains(callingPackage)
+                        ) {
+                            return
+                        }
+
+                        val slice = param.result ?: return
+                        val rawList = XposedHelpers.callMethod(slice, "getList") as? List<*> ?: return
+                        if (rawList.isEmpty()) return
+
+                        val context = try {
+                            XposedHelpers.getObjectField(param.thisObject, "mContext") as? Context
+                        } catch (_: Throwable) {
+                            null
+                        }
+
+                        val filteredList = ArrayList<Any>(rawList.size)
+                        var modified = false
+
+                        for (item in rawList) {
+                            if (item == null) continue
+                            val activityInfo = extractActivityInfo(item)
+                            val pkgName = activityInfo?.packageName ?: targetPackage
+
+                            if (!pkgName.isNullOrEmpty()) {
+                                val isModule = ModuleCache.isXposedModule(
+                                    packageName = pkgName,
+                                    appInfo = activityInfo?.applicationInfo,
+                                    context = context,
+                                    userHandle = userHandle
+                                )
+                                if (ConfigStore.shouldHidePackage(pkgName, userId, isModule)) {
+                                    modified = true
+                                    continue
+                                }
+                            }
+                            filteredList.add(item)
+                        }
+
+                        if (modified) {
+                            param.result = XposedHelpers.newInstance(slice.javaClass, filteredList)
+                        }
+                    } catch (t: Throwable) {
+                        XposedBridge.log("[$TAG] Fail-safe catch in afterHookedMethod: ${t.message}")
+                    }
+                }
+            }
+        )
+    }
+
+    private fun isCallerSelfApp(launcherAppsImpl: Any?): Boolean {
+        if (launcherAppsImpl == null) return false
+        val callingUid = Binder.getCallingUid()
+        val token = Binder.clearCallingIdentity()
+        return try {
+            val context = XposedHelpers.getObjectField(launcherAppsImpl, "mContext") as? Context ?: return false
+            val pkgs = context.packageManager.getPackagesForUid(callingUid) ?: return false
+            pkgs.contains(ConfigStore.SELF_PACKAGE)
+        } catch (_: Throwable) {
+            false
+        } finally {
+            Binder.restoreCallingIdentity(token)
         }
     }
 
@@ -161,13 +245,48 @@ object LauncherHook {
         val token = Binder.clearCallingIdentity()
         return try {
             val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-            XposedHelpers.callMethod(
-                launcherAppsImpl,
-                "queryIntentLauncherActivities",
-                intent,
-                1000,
-                profile
-            ) as? List<*> ?: emptyList<Any>()
+            try {
+                val res = XposedHelpers.callMethod(
+                    launcherAppsImpl,
+                    "queryIntentLauncherActivities",
+                    intent,
+                    1000,
+                    profile
+                ) as? List<*>
+                if (!res.isNullOrEmpty()) return res
+            } catch (_: Throwable) {
+            }
+
+            try {
+                val slice = XposedHelpers.callMethod(
+                    launcherAppsImpl,
+                    "queryActivitiesForUser",
+                    intent,
+                    profile
+                )
+                if (slice != null) {
+                    val list = XposedHelpers.callMethod(slice, "getList") as? List<*>
+                    if (!list.isNullOrEmpty()) return list
+                }
+            } catch (_: Throwable) {
+            }
+
+            try {
+                val slice = XposedHelpers.callMethod(
+                    launcherAppsImpl,
+                    "queryActivitiesForUser",
+                    "android",
+                    intent,
+                    profile
+                )
+                if (slice != null) {
+                    val list = XposedHelpers.callMethod(slice, "getList") as? List<*>
+                    if (!list.isNullOrEmpty()) return list
+                }
+            } catch (_: Throwable) {
+            }
+
+            emptyList<Any>()
         } catch (_: Throwable) {
             emptyList<Any>()
         } finally {
@@ -196,11 +315,6 @@ object LauncherHook {
         }
     }
 
-    /**
-     * Triggers `MyPackageMonitor.onPackageChanged` inside `LauncherAppsImpl` across all active user
-     * profiles (User 0, User 10 Clone Profile, Work Profile, etc.) so connected launchers immediately
-     * refresh the affected packages in real-time without needing a launcher restart.
-     */
     private fun notifyLaunchersOfChanges(
         launcherAppsImpl: Any?,
         changedPackages: List<String>,
@@ -235,24 +349,42 @@ object LauncherHook {
         val handles = LinkedHashSet<UserHandle>()
         if (fallbackUserHandle != null) handles.add(fallbackUserHandle)
 
+        val token = Binder.clearCallingIdentity()
         try {
-            val umInternal = XposedHelpers.getObjectField(launcherAppsImpl, "mUserManagerInternal")
-            if (umInternal != null) {
-                val userIds = XposedHelpers.callMethod(umInternal, "getUserIds") as? IntArray
-                if (userIds != null) {
-                    for (id in userIds) {
-                        val uh = XposedHelpers.callStaticMethod(UserHandle::class.java, "of", id) as? UserHandle
-                        if (uh != null) handles.add(uh)
+            // 1. UserManagerInternal#getUserIds() -> returns all existing user IDs on the device
+            try {
+                val umInternal = XposedHelpers.getObjectField(launcherAppsImpl, "mUserManagerInternal")
+                if (umInternal != null) {
+                    val userIds = XposedHelpers.callMethod(umInternal, "getUserIds") as? IntArray
+                    if (userIds != null) {
+                        for (id in userIds) {
+                            val uh = XposedHelpers.callStaticMethod(UserHandle::class.java, "of", id) as? UserHandle
+                            if (uh != null) handles.add(uh)
+                        }
                     }
                 }
+            } catch (_: Throwable) {
             }
-        } catch (_: Throwable) {
-        }
 
-        try {
-            val um = XposedHelpers.getObjectField(launcherAppsImpl, "mUm") as? UserManager
-            um?.userProfiles?.let { handles.addAll(it) }
-        } catch (_: Throwable) {
+            // 2. UserManager#getUsers() -> fallback for any custom/older ROMs
+            try {
+                val um = XposedHelpers.getObjectField(launcherAppsImpl, "mUm") as? UserManager
+                if (um != null) {
+                    val users = XposedHelpers.callMethod(um, "getUsers") as? List<*>
+                    if (users != null) {
+                        for (u in users) {
+                            if (u == null) continue
+                            val id = XposedHelpers.getIntField(u, "id")
+                            val uh = XposedHelpers.callStaticMethod(UserHandle::class.java, "of", id) as? UserHandle
+                            if (uh != null) handles.add(uh)
+                        }
+                    }
+                    um.userProfiles?.let { handles.addAll(it) }
+                }
+            } catch (_: Throwable) {
+            }
+        } finally {
+            Binder.restoreCallingIdentity(token)
         }
 
         return handles.toList()
