@@ -543,12 +543,7 @@ fun MainScreen(
                     CircularProgressIndicator(modifier = Modifier.size(32.dp), strokeWidth = 3.dp)
                 }
             } else {
-                PullToRefreshBox(
-                    isRefreshing = isRefreshing,
-                    onRefresh = { refreshState(showToastOnDone = false) },
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    when (currentTab) {
+                when (currentTab) {
                     MainTab.HOME -> HomeTabScreen(
                         strings = strings,
                         isHookActive = isHookActive,
@@ -575,24 +570,30 @@ fun MainScreen(
                         }
                     )
 
-                    MainTab.APPS -> AppsTabScreen(
-                        strings = strings,
-                        apps = apps,
-                        availableUserIds = availableUserIds,
-                        showSystemApps = showSystemApps,
-                        autoHideModules = autoHideModules,
-                        autoHideCloneModules = autoHideCloneModules,
-                        whitelist = whitelist,
-                        blacklist = blacklist,
-                        searchQuery = searchQuery,
-                        onSearchChange = { searchQuery = it },
-                        filterMode = filterMode,
-                        onFilterModeChange = { filterMode = it },
-                        isEntryHidden = { isEntryHidden(it, whitelist, blacklist, autoHideModules, autoHideCloneModules) },
-                        onToggleAppHidden = { entry, hide ->
-                            updateAppHidden(entry, hide)
-                        }
-                    )
+                    MainTab.APPS -> PullToRefreshBox(
+                        isRefreshing = isRefreshing,
+                        onRefresh = { refreshState(showToastOnDone = false) },
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        AppsTabScreen(
+                            strings = strings,
+                            apps = apps,
+                            availableUserIds = availableUserIds,
+                            showSystemApps = showSystemApps,
+                            autoHideModules = autoHideModules,
+                            autoHideCloneModules = autoHideCloneModules,
+                            whitelist = whitelist,
+                            blacklist = blacklist,
+                            searchQuery = searchQuery,
+                            onSearchChange = { searchQuery = it },
+                            filterMode = filterMode,
+                            onFilterModeChange = { filterMode = it },
+                            isEntryHidden = { isEntryHidden(it, whitelist, blacklist, autoHideModules, autoHideCloneModules) },
+                            onToggleAppHidden = { entry, hide ->
+                                updateAppHidden(entry, hide)
+                            }
+                        )
+                    }
 
                     MainTab.SETTINGS -> SettingsTabScreen(
                         context = context,
@@ -663,7 +664,6 @@ fun MainScreen(
                             Toast.makeText(context, strings.resetDoneToast, Toast.LENGTH_SHORT).show()
                         }
                     )
-                }
                 }
             }
         }
