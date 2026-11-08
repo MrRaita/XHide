@@ -8,25 +8,30 @@
 
 - **Zero-Lock System Architecture:**
   Hooks `com.android.server.pm.LauncherAppsService$LauncherAppsImpl` and `com.android.server.pm.UserManagerService` at the binder boundary instead of `PackageManagerService`. This completely eliminates `PackageManagerService` lock contention, boot deadlocks, and `ActivityNotFoundException` crashes when launching module settings.
+- **Launcher-Focused Scope:**
+  Specifically targets launcher visibility (`LauncherAppsService`). Filters app drawer activities, pinned launcher shortcuts, and launcher queries across all profiles without modifying low-level `PackageManager.getInstalledPackages` system queries.
+- **Lock-Free Atomic Concurrency:**
+  Config rules are swapped atomically using `@Volatile` immutable sets, guaranteeing zero race conditions between concurrent Binder threads and companion UI sync.
 - **Complete Launcher Filtering Coverage:**
-  Intercepts `getLauncherActivities`, `resolveLauncherActivityInternal` (Android 12–17), `resolveActivity` (Android 11), and `isActivityEnabled` (Android 11–17) so both app drawer entries and pinned workspace shortcuts are cleanly filtered.
+  Intercepts `getLauncherActivities`, `resolveLauncherActivityInternal` (Android 12–17), `resolveActivity` (Android 11), and `isActivityEnabled` (Android 11–17) so both app drawer entries and workspace items are cleanly filtered.
 - **True Per-User & Multi-Profile Isolation:**
   Visibility rules are keyed by `userId:packageName`. Hiding or unhiding an application in `User 0` (Owner) never affects `User 10` (Work Profile / Clone Profile), MIUI `999` (Dual Apps), Samsung `150` (Secure Folder), Android 15–17 Private Space, or Secondary Users, and vice versa.
 - **Universal 3-Tier Xposed Module Detector (O(1) Cache):**
-  Automatically detects modules across both base and split APKs (`sourceDir`, `publicSourceDir`, `splitSourceDirs`):
-  - **Tier 1 (Manifest Meta-Data):** `xposedmodule`, `xposedminversion`, `xposeddescription`, `xposedscope`
-  - **Tier 2 (Classic Xposed API):** `assets/xposed_init`
-  - **Tier 3 (Modern LibXposed API 100):** `META-INF/xposed/module.prop`, `META-INF/xposed/java_init.list`, `META-INF/xposed/scope.list`
-- **Caller-Aware Manager Bypass:**
-  Queries originating from `android`, `XHide`, or protected managers (`LSPosed`, `Vector`, `LSPatch`, `EdXposed`, `KernelSU`, `KSU Next`, `Magisk`, `APatch`) are never filtered, ensuring hidden modules can always be opened from your manager.
-- **Instant Live Launcher Synchronization:**
-  Toggling any rule triggers `MyPackageMonitor.onPackageChanged` (with universal `IOnAppsChangedListener` fallback) directly inside `system_server` across all user profiles. Icons vanish or reappear immediately without restarting the launcher or rebooting the device.
-- **Fail-Safe Crash Protection & Diagnostics:**
-  Includes a global uncaught exception handler and a 1-tap GitHub Issue diagnostics reporter that pre-fills device metadata and circular logs.
+  Automatically detects modules across base and split APKs with negative cache poisoning protection:
+  - **Tier 1 (Manifest Meta-Data):** `xposedmodule`, `xposedminversion`, `xposeddescription`, `xposedscope`, `libxposed`, `libxposed_minversion`, `libxposed_api`, `libxposed_scope`
+  - **Tier 2 (Classic Xposed API):** Fast APK zip central directory inspection for `assets/xposed_init`
+  - **Tier 3 (Modern LibXposed API 100):** Fast APK zip central directory inspection for `META-INF/xposed/module.prop`
+- **Caller-Aware Manager Bypass & Cached AppId:**
+  Queries originating from `android`, `XHide`, or protected managers (`LSPosed`, `Vector`, `LSPatch`, `EdXposed`, `KernelSU`, `KSU Next`, `Magisk`, `APatch`) are never filtered. Caller AppId is cached in memory to ensure instantaneous O(1) integer verification without repeated PackageManager IPC.
+- **Batch Live Launcher Synchronization:**
+  Toggling any rule triggers `MyPackageMonitor.onPackageChanged` with batched `IOnAppsChangedListener` callbacks across all user profiles, eliminating broadcast storms.
+- **Fail-Safe Crash Protection & Secure Diagnostics:**
+  Includes a global uncaught exception handler with infinite restart loop protection and a 1-tap GitHub Issue diagnostics reporter with Android 13+ sensitive clipboard protection (`ClipDescription.EXTRA_IS_SENSITIVE`).
 - **Material 3 Companion UI:**
   - Clean 3-tab portrait interface (`Home`, `Apps`, `Settings`) with per-user filter chips (`User 0`, `User 10`, etc.).
   - Multi-language support: System Default, **English**, **Türkçe**, **Deutsch**, **Русский**, and **简体中文**.
   - Dynamic Material You colors and AMOLED Pure Black (`#000000`) theme mode.
+  - Fine-grained UI / DPI scaling slider (90%..115%) with 1% steps.
   - JSON configuration backup export and import via Android Storage Access Framework (SAF).
 
 ---
@@ -66,6 +71,12 @@ cd XHide
 
 - **Release APK:** `app/build/outputs/apk/release/app-release.apk`
 - **Debug APK:** `app/build/outputs/apk/debug/app-debug.apk`
+
+---
+
+## Acknowledgements & Special Thanks
+
+- **[@MrRaita](https://github.com/MrRaita)** — For conducting a comprehensive static code review on v1.0.3, identifying concurrency race conditions in `ConfigStore`, Binder payload safety thresholds, hook isolation opportunities, and hardening security vectors across the codebase.
 
 ---
 
