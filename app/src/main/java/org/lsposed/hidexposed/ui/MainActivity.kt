@@ -1,7 +1,5 @@
 package org.lsposed.hidexposed.ui
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -17,16 +15,20 @@ import android.os.UserHandle
 import android.os.UserManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -41,7 +43,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -73,6 +74,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.CornerRadius
@@ -88,7 +90,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -124,9 +125,9 @@ enum class MainTab {
 }
 
 sealed interface FilterMode {
+    data object AllApps : FilterMode
     data object XposedOnly : FilterMode
     data object HiddenOnly : FilterMode
-    data object AllApps : FilterMode
     data class ByUser(val userId: Int) : FilterMode
 }
 
@@ -195,7 +196,8 @@ fun MainScreen(
     var defaultLauncher by remember { mutableStateOf<LauncherInfo?>(null) }
     var isLoading by remember { mutableStateOf(true) }
     var searchQuery by remember { mutableStateOf("") }
-    var filterMode by remember { mutableStateOf<FilterMode>(FilterMode.XposedOnly) }
+    // Default filter mode is AllApps ("Tümü") as requested
+    var filterMode by remember { mutableStateOf<FilterMode>(FilterMode.AllApps) }
 
     fun isEntryHidden(
         entry: AppEntry,
@@ -302,6 +304,84 @@ fun MainScreen(
         whitelist = newWl
         blacklist = newBl
         syncWithSystem(newWl = newWl, newBl = newBl, changedPkgs = listOf(entry.packageName))
+    }
+
+    // SAF File Launchers for JSON Backup Export & Import
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val jsonBytes = ConfigStore.exportConfigJson().toByteArray(Charsets.UTF_8)
+                    context.contentResolver.openOutputStream(uri)?.use { out ->
+                        out.write(jsonBytes)
+                        out.flush()
+                    }
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, strings.copiedToast, Toast.LENGTH_SHORT).show()
+                    }
+                } catch (_: Throwable) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, strings.importFailedToast, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val jsonStr = context.contentResolver.openInputStream(uri)?.use { input ->
+                        input.bufferedReader(Charsets.UTF_8).readText()
+                    } ?: throw IllegalArgumentException("Empty file")
+
+                    val json = JSONObject(jsonStr)
+                    val newAuto = json.optBoolean("autoHide", true)
+                    val newAutoClone = json.optBoolean("autoHideClone", true)
+                    val newWl = mutableSetOf<String>()
+                    val wlArr = json.optJSONArray("whitelist")
+                    if (wlArr != null) {
+                        for (i in 0 until wlArr.length()) {
+                            val s = wlArr.optString(i)
+                            if (s.isNotBlank()) newWl.add(s)
+                        }
+                    }
+                    val newBl = mutableSetOf<String>()
+                    val blArr = json.optJSONArray("blacklist")
+                    if (blArr != null) {
+                        for (i in 0 until blArr.length()) {
+                            val s = blArr.optString(i)
+                            if (s.isNotBlank()) newBl.add(s)
+                        }
+                    }
+                    val allPkgs = apps.map { it.packageName }.distinct()
+                    ConfigStore.saveUiPrefsAndSync(
+                        context = context,
+                        autoHide = newAuto,
+                        autoHideClone = newAutoClone,
+                        whitelist = newWl,
+                        blacklist = newBl,
+                        changedPackages = allPkgs
+                    )
+                    withContext(Dispatchers.Main) {
+                        autoHideModules = newAuto
+                        autoHideCloneModules = newAutoClone
+                        whitelist = newWl
+                        blacklist = newBl
+                        Toast.makeText(context, strings.importedToast, Toast.LENGTH_SHORT).show()
+                    }
+                } catch (_: Throwable) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, strings.importFailedToast, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
     }
 
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues()
@@ -426,7 +506,6 @@ fun MainScreen(
                     )
 
                     MainTab.SETTINGS -> SettingsTabScreen(
-                        context = context,
                         strings = strings,
                         langCode = langCode,
                         themeMode = themeMode,
@@ -468,43 +547,11 @@ fun MainScreen(
                         onUpdateAppearance = { newLang, newTheme, newAmoled, newDynamic ->
                             onUpdateAppearance(newLang, newTheme, newAmoled, newDynamic, showSystemApps)
                         },
-                        onImportConfig = { jsonStr ->
-                            try {
-                                val json = JSONObject(jsonStr)
-                                val newAuto = json.optBoolean("autoHide", true)
-                                val newAutoClone = json.optBoolean("autoHideClone", true)
-                                val newWl = mutableSetOf<String>()
-                                val wlArr = json.optJSONArray("whitelist")
-                                if (wlArr != null) {
-                                    for (i in 0 until wlArr.length()) {
-                                        val s = wlArr.optString(i)
-                                        if (s.isNotBlank()) newWl.add(s)
-                                    }
-                                }
-                                val newBl = mutableSetOf<String>()
-                                val blArr = json.optJSONArray("blacklist")
-                                if (blArr != null) {
-                                    for (i in 0 until blArr.length()) {
-                                        val s = blArr.optString(i)
-                                        if (s.isNotBlank()) newBl.add(s)
-                                    }
-                                }
-                                autoHideModules = newAuto
-                                autoHideCloneModules = newAutoClone
-                                whitelist = newWl
-                                blacklist = newBl
-                                val allPkgs = apps.map { it.packageName }.distinct()
-                                syncWithSystem(
-                                    newAutoHide = newAuto,
-                                    newAutoHideClone = newAutoClone,
-                                    newWl = newWl,
-                                    newBl = newBl,
-                                    changedPkgs = allPkgs
-                                )
-                                Toast.makeText(context, strings.importedToast, Toast.LENGTH_SHORT).show()
-                            } catch (_: Throwable) {
-                                Toast.makeText(context, strings.importFailedToast, Toast.LENGTH_SHORT).show()
-                            }
+                        onRequestExportFile = {
+                            exportLauncher.launch("hidexposed_backup.json")
+                        },
+                        onRequestImportFile = {
+                            importLauncher.launch(arrayOf("application/json", "*/*"))
                         },
                         onResetAll = {
                             val defaultWl = setOf(ConfigStore.SELF_USER0_KEY)
@@ -530,6 +577,7 @@ fun MainScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun HomeTabScreen(
     strings: AppStrings,
@@ -703,7 +751,7 @@ private fun HomeTabScreen(
             }
         }
 
-        // 4. Currently Hidden Icons Quick Preview Strip
+        // 4. Currently Hidden Icons (Vertical Wrapping List — No Horizontal Scroll!)
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
@@ -746,55 +794,42 @@ private fun HomeTabScreen(
                         text = strings.noHiddenAppsYet,
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 8.dp)
+                        modifier = Modifier.padding(vertical = 6.dp)
                     )
                 } else {
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        contentPadding = PaddingValues(vertical = 2.dp)
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(hiddenApps, key = { it.uniqueKey }) { app ->
-                            Column(
+                        for (app in hiddenApps) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
                                 modifier = Modifier
-                                    .width(62.dp)
-                                    .clip(RoundedCornerShape(10.dp))
+                                    .clip(RoundedCornerShape(8.dp))
                                     .clickable { onToggleAppHidden(app, false) }
-                                    .padding(vertical = 4.dp, horizontal = 2.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Box {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                     if (app.icon != null) {
                                         Image(
                                             bitmap = app.icon,
                                             contentDescription = app.label,
                                             modifier = Modifier
-                                                .size(38.dp)
-                                                .clip(RoundedCornerShape(9.dp))
+                                                .size(20.dp)
+                                                .clip(RoundedCornerShape(5.dp))
                                         )
+                                        Spacer(modifier = Modifier.width(6.dp))
                                     }
-                                    if (app.userId != 0) {
-                                        Surface(
-                                            color = MaterialTheme.colorScheme.tertiary,
-                                            shape = RoundedCornerShape(4.dp),
-                                            modifier = Modifier.align(Alignment.BottomEnd)
-                                        ) {
-                                            Text(
-                                                text = "U${app.userId}",
-                                                fontSize = 8.sp,
-                                                color = MaterialTheme.colorScheme.onTertiary,
-                                                modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp)
-                                            )
-                                        }
-                                    }
+                                    Text(
+                                        text = if (app.userId == 0) app.label else "${app.label} (U${app.userId})",
+                                        fontSize = 11.5.sp,
+                                        maxLines = 1
+                                    )
                                 }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = app.label,
-                                    fontSize = 10.5.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    textAlign = TextAlign.Center
-                                )
                             }
                         }
                     }
@@ -847,6 +882,7 @@ private fun DashboardStatCard(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AppsTabScreen(
     strings: AppStrings,
@@ -864,9 +900,9 @@ private fun AppsTabScreen(
         apps.filter { app ->
             val allowSystem = showSystemApps || !app.isSystemApp || app.isXposedModule || app.userId != 0
             val matchesMode = when (val mode = filterMode) {
+                is FilterMode.AllApps -> allowSystem
                 is FilterMode.XposedOnly -> app.isXposedModule
                 is FilterMode.HiddenOnly -> isEntryHidden(app)
-                is FilterMode.AllApps -> allowSystem
                 is FilterMode.ByUser -> app.userId == mode.userId && allowSystem
             }
             val matchesQuery = searchQuery.isBlank() ||
@@ -876,6 +912,9 @@ private fun AppsTabScreen(
         }
     }
 
+    val allCount = remember(apps, showSystemApps) {
+        apps.count { showSystemApps || !it.isSystemApp || it.isXposedModule || it.userId != 0 }
+    }
     val xposedCount = remember(apps) { apps.count { it.isXposedModule } }
     val hiddenCount = remember(apps, isEntryHidden) { apps.count { isEntryHidden(it) } }
 
@@ -937,13 +976,17 @@ private fun AppsTabScreen(
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // Compact Filter Chips Row
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        // Wrapping Filter Chips (Vertical wrap, no horizontal scrolling; order: Tümü -> Xposed -> Gizli -> User 0 -> User 10...)
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
+            CompactFilterChip(
+                selected = filterMode is FilterMode.AllApps,
+                label = "${strings.filterAll} ($allCount)",
+                onClick = { onFilterModeChange(FilterMode.AllApps) }
+            )
             CompactFilterChip(
                 selected = filterMode is FilterMode.XposedOnly,
                 label = "${strings.filterXposed} ($xposedCount)",
@@ -964,11 +1007,6 @@ private fun AppsTabScreen(
                     onClick = { onFilterModeChange(FilterMode.ByUser(uid)) }
                 )
             }
-            CompactFilterChip(
-                selected = filterMode is FilterMode.AllApps,
-                label = strings.filterAll,
-                onClick = { onFilterModeChange(FilterMode.AllApps) }
-            )
         }
 
         Spacer(modifier = Modifier.height(6.dp))
@@ -1112,9 +1150,9 @@ private fun MiniBadge(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SettingsTabScreen(
-    context: Context,
     strings: AppStrings,
     langCode: String,
     themeMode: String,
@@ -1129,9 +1167,17 @@ private fun SettingsTabScreen(
     onToggleHideSelf: (Boolean) -> Unit,
     onToggleShowSystemApps: (Boolean) -> Unit,
     onUpdateAppearance: (String, String, Boolean, Boolean) -> Unit,
-    onImportConfig: (String) -> Unit,
+    onRequestExportFile: () -> Unit,
+    onRequestImportFile: () -> Unit,
     onResetAll: () -> Unit
 ) {
+    val systemDark = isSystemInDarkTheme()
+    val isDarkEffective = when (themeMode) {
+        "DARK" -> true
+        "LIGHT" -> false
+        else -> systemDark
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1170,7 +1216,7 @@ private fun SettingsTabScreen(
             )
         }
 
-        // Section 2: Appearance & Language
+        // Section 2: Appearance & Language (Vertical FlowRow, no horizontal scrolling!)
         SettingsSectionCard(title = strings.sectionAppearance) {
             Text(
                 text = strings.languageTitle,
@@ -1178,11 +1224,10 @@ private fun SettingsTabScreen(
                 fontWeight = FontWeight.Medium
             )
             Spacer(modifier = Modifier.height(6.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 for ((code, displayName) in Localization.languageOptions) {
                     CompactFilterChip(
@@ -1203,9 +1248,10 @@ private fun SettingsTabScreen(
                 fontWeight = FontWeight.Medium
             )
             Spacer(modifier = Modifier.height(6.dp))
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 val themes = listOf(
                     "SYSTEM" to strings.themeSystem,
@@ -1227,9 +1273,12 @@ private fun SettingsTabScreen(
             CompactSwitchRow(
                 title = strings.amoledTitle,
                 subtitle = strings.amoledDesc,
-                checked = amoledBlack,
+                checked = isDarkEffective && amoledBlack,
+                enabled = isDarkEffective,
                 onCheckedChange = { checked ->
-                    onUpdateAppearance(langCode, themeMode, checked, dynamicColor)
+                    if (isDarkEffective) {
+                        onUpdateAppearance(langCode, themeMode, checked, dynamicColor)
+                    }
                 }
             )
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
@@ -1243,31 +1292,18 @@ private fun SettingsTabScreen(
             )
         }
 
-        // Section 3: Backup & Reset
+        // Section 3: Backup & Reset (SAF File Export / Import)
         SettingsSectionCard(title = strings.sectionBackupReset) {
             CompactActionRow(
                 title = strings.exportConfigTitle,
                 subtitle = strings.exportConfigDesc,
-                onClick = {
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                    val json = ConfigStore.exportConfigJson()
-                    clipboard?.setPrimaryClip(ClipData.newPlainText("hidexposed_config", json))
-                    Toast.makeText(context, strings.copiedToast, Toast.LENGTH_SHORT).show()
-                }
+                onClick = onRequestExportFile
             )
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
             CompactActionRow(
                 title = strings.importConfigTitle,
                 subtitle = strings.importConfigDesc,
-                onClick = {
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                    val text = clipboard?.primaryClip?.getItemAt(0)?.text?.toString()
-                    if (!text.isNullOrBlank()) {
-                        onImportConfig(text)
-                    } else {
-                        Toast.makeText(context, strings.importFailedToast, Toast.LENGTH_SHORT).show()
-                    }
-                }
+                onClick = onRequestImportFile
             )
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
             CompactActionRow(
@@ -1334,12 +1370,14 @@ private fun CompactSwitchRow(
     title: String,
     subtitle: String,
     checked: Boolean,
+    enabled: Boolean = true,
     onCheckedChange: (Boolean) -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onCheckedChange(!checked) }
+            .alpha(if (enabled) 1f else 0.42f)
+            .clickable(enabled = enabled) { onCheckedChange(!checked) }
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1359,6 +1397,7 @@ private fun CompactSwitchRow(
         Spacer(modifier = Modifier.width(8.dp))
         Switch(
             checked = checked,
+            enabled = enabled,
             onCheckedChange = onCheckedChange,
             modifier = Modifier
                 .scale(0.8f)
@@ -1656,7 +1695,6 @@ private fun SettingsVectorIcon() {
         val w = size.width
         val h = size.height
         val stroke = Stroke(width = 1.8.dp.toPx(), cap = StrokeCap.Round)
-        // 3 horizontal sliders
         drawLine(color, Offset(w * 0.15f, h * 0.25f), Offset(w * 0.85f, h * 0.25f), strokeWidth = stroke.width, cap = StrokeCap.Round)
         drawCircle(color, radius = 2.4.dp.toPx(), center = Offset(w * 0.35f, h * 0.25f))
         drawLine(color, Offset(w * 0.15f, h * 0.50f), Offset(w * 0.85f, h * 0.50f), strokeWidth = stroke.width, cap = StrokeCap.Round)
@@ -1669,17 +1707,30 @@ private fun SettingsVectorIcon() {
 @Composable
 private fun RefreshVectorIcon() {
     val color = LocalContentColor.current
-    Canvas(modifier = Modifier.size(18.dp)) {
+    Canvas(modifier = Modifier.size(19.dp)) {
         val w = size.width
         val h = size.height
+        val strokeWidth = 1.8.dp.toPx()
+        // Circular arc from 40 deg to 315 deg (-45 deg top-right)
         drawArc(
             color = color,
-            startAngle = 35f,
-            sweepAngle = 290f,
+            startAngle = 40f,
+            sweepAngle = 275f,
             useCenter = false,
             topLeft = Offset(w * 0.16f, h * 0.16f),
             size = Size(w * 0.68f, h * 0.68f),
-            style = Stroke(width = 1.8.dp.toPx(), cap = StrokeCap.Round)
+            style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+        )
+        // Arrowhead at top-right tip of the arc (around x=0.74, y=0.26)
+        val arrowHead = Path().apply {
+            moveTo(w * 0.56f, h * 0.26f)
+            lineTo(w * 0.77f, h * 0.26f)
+            lineTo(w * 0.77f, h * 0.06f)
+        }
+        drawPath(
+            path = arrowHead,
+            color = color,
+            style = Stroke(width = strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round)
         )
     }
 }
