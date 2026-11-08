@@ -4,8 +4,10 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.os.Binder
+import android.os.Build
 import android.os.Handler
 import android.os.IInterface
 import android.os.Process
@@ -15,7 +17,9 @@ import android.os.UserManager
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
+import org.lsposed.hidexposed.BuildConfig
 import org.lsposed.hidexposed.data.ConfigStore
+import java.security.MessageDigest
 import java.util.ArrayList
 
 /**
@@ -547,16 +551,52 @@ object LauncherHook {
         val context = getContextFromImpl(serviceObject) ?: return false
         val token = Binder.clearCallingIdentity()
         return try {
-            val pkgs = context.packageManager.getPackagesForUid(callingUid)
+            val pm = context.packageManager
+            val pkgs = pm.getPackagesForUid(callingUid)
             val isSelf = pkgs?.contains(ConfigStore.SELF_PACKAGE) == true
-            if (isSelf) {
-                cachedSelfAppId = appId
+            if (!isSelf) return false
+
+            if (!verifyCallerSignature(pm)) {
+                return false
             }
-            isSelf
+
+            cachedSelfAppId = appId
+            true
         } catch (_: Throwable) {
             false
         } finally {
             Binder.restoreCallingIdentity(token)
+        }
+    }
+
+    private fun verifyCallerSignature(pm: PackageManager): Boolean {
+        return try {
+            val pkgInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                pm.getPackageInfo(ConfigStore.SELF_PACKAGE, PackageManager.GET_SIGNING_CERTIFICATES)
+            } else {
+                @Suppress("DEPRECATION")
+                pm.getPackageInfo(ConfigStore.SELF_PACKAGE, PackageManager.GET_SIGNATURES)
+            } ?: return false
+
+            val signers = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                pkgInfo.signingInfo?.apkContentsSigners
+            } else {
+                @Suppress("DEPRECATION")
+                pkgInfo.signatures
+            }
+            if (signers.isNullOrEmpty()) return false
+
+            val pinnedCert = BuildConfig.RELEASE_CERT_SHA256
+            if (pinnedCert.isNotEmpty()) {
+                val md = MessageDigest.getInstance("SHA-256")
+                val digestHex = md.digest(signers[0].toByteArray())
+                    .joinToString("") { "%02x".format(it) }
+                return digestHex.equals(pinnedCert, ignoreCase = true)
+            }
+            true
+        } catch (t: Throwable) {
+            XposedBridge.log("[$TAG] Caller signature verification error: ${t.message}")
+            false
         }
     }
 
