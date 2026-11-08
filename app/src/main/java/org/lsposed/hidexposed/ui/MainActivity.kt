@@ -1951,6 +1951,84 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
         }
     }
 
+    // 2. Secondary discovery pass: Ensure 100% of installed Xposed modules and
+    // actively configured (whitelisted/blacklisted) packages are present in XHide,
+    // even if they do not declare an android.intent.category.LAUNCHER activity or were
+    // omitted from launcher queries after device reboot.
+    val currentWl = ConfigStore.getWhitelist()
+    val currentBl = ConfigStore.getBlacklist()
+    val installedApps = try {
+        pm.getInstalledApplications(PackageManager.GET_META_DATA)
+    } catch (_: Throwable) {
+        emptyList()
+    }
+
+    for (appInfo in installedApps) {
+        val pkg = appInfo.packageName ?: continue
+        if (pkg == "android" || ModuleCache.KNOWN_MANAGERS.contains(pkg)) continue
+
+        val key = ConfigStore.userKey(0, pkg)
+        if (entriesMap.containsKey(key)) continue
+
+        val isXposed = detectIsXposedApp(appInfo, pm, Process.myUserHandle())
+        val isConfigured = currentWl.contains(key) || currentBl.contains(key) ||
+            currentWl.contains(pkg) || currentBl.contains(pkg)
+
+        if (!isXposed && !isConfigured) continue
+
+        val isSystem = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0 &&
+            (appInfo.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0
+
+        val label = try {
+            pm.getApplicationLabel(appInfo).toString()
+        } catch (_: Throwable) {
+            pkg
+        }
+
+        entriesMap[key] = AppEntry(
+            userId = 0,
+            packageName = pkg,
+            label = label,
+            isXposedModule = isXposed,
+            isSystemApp = isSystem
+        )
+    }
+
+    // 3. Fallback for any cross-user whitelisted/blacklisted packages (e.g. User 10) not yet in entriesMap
+    for (entryKey in (currentWl + currentBl)) {
+        if (entriesMap.containsKey(entryKey)) continue
+        val parts = entryKey.split(":", limit = 2)
+        val (userId, pkg) = if (parts.size == 2) {
+            (parts[0].toIntOrNull() ?: 0) to parts[1]
+        } else {
+            0 to entryKey
+        }
+        val fullKey = ConfigStore.userKey(userId, pkg)
+        if (entriesMap.containsKey(fullKey)) continue
+        if (pkg == "android" || ModuleCache.KNOWN_MANAGERS.contains(pkg)) continue
+
+        val appInfo = try {
+            pm.getApplicationInfo(pkg, PackageManager.GET_META_DATA)
+        } catch (_: Throwable) {
+            null
+        }
+
+        val isXposed = if (appInfo != null) detectIsXposedApp(appInfo, pm, Process.myUserHandle()) else true
+        val isSystem = appInfo != null && (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0 &&
+            (appInfo.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0
+        val label = appInfo?.let {
+            try { pm.getApplicationLabel(it).toString() } catch (_: Throwable) { pkg }
+        } ?: pkg
+
+        entriesMap[fullKey] = AppEntry(
+            userId = userId,
+            packageName = pkg,
+            label = label,
+            isXposedModule = isXposed,
+            isSystemApp = isSystem
+        )
+    }
+
     return entriesMap.values.sortedWith(
         compareByDescending<AppEntry> { it.isXposedModule }
             .thenBy { it.userId }
