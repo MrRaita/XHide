@@ -61,4 +61,20 @@ class ConfigStoreCompatibilityTest {
         // Xposed module in User 10 should NOT be auto-hidden because autoHideClone is false
         assertFalse(ConfigStore.shouldHidePackage("ps.reso.instaeclipse", userId = 10, isDetectedXposedModule = true))
     }
+
+    @Test
+    fun testSafeBinderLimitRejection() {
+        val hugePayload = "A".repeat(100 * 1024) // Exceeds safe 96 KB threshold
+        val changed = ConfigStore.applySystemIpcUpdate(hugePayload)
+        assertTrue(changed.isEmpty())
+    }
+
+    @Test
+    fun testValidKeyRegex() {
+        assertTrue(ConfigStore.isValidConfigKey("0:org.lsposed.hidexposed"))
+        assertTrue(ConfigStore.isValidConfigKey("10:com.discord"))
+        assertTrue(ConfigStore.isValidConfigKey("com.example.app"))
+        assertFalse(ConfigStore.isValidConfigKey("../../../etc/shadow"))
+        assertFalse(ConfigStore.isValidConfigKey("invalid key with spaces"))
+    }
 }
