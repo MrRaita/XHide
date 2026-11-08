@@ -533,11 +533,9 @@ object LauncherHook {
         }
     }
 
-    private fun isExemptCaller(callingPackage: String, callingUid: Int, serviceObject: Any?): Boolean {
+    private fun isExemptCaller(callingPackage: String?, callingUid: Int, serviceObject: Any?): Boolean {
         if (callingUid == Process.SYSTEM_UID || callingUid == 0) return true
-        if (callingPackage == ConfigStore.SELF_PACKAGE) {
-            return isCallerSelf(callingUid, serviceObject)
-        }
+        if (isCallerSelf(callingUid, serviceObject)) return true
         return false
     }
 
