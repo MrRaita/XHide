@@ -1771,18 +1771,14 @@ private fun detectDefaultLauncher(context: Context): LauncherInfo? {
     }
 }
 
-private fun getUserIdFromHandle(userHandle: UserHandle?, userManager: UserManager?): Int {
+private fun getUserIdFromHandle(userHandle: UserHandle?, userManager: UserManager? = null): Int {
     if (userHandle == null) return 0
     return try {
         val method = UserHandle::class.java.getDeclaredMethod("getIdentifier")
         method.isAccessible = true
-        (method.invoke(userHandle) as? Int) ?: 0
+        (method.invoke(userHandle) as? Int) ?: userHandle.hashCode()
     } catch (_: Throwable) {
-        try {
-            userManager?.getSerialNumberForUser(userHandle)?.toInt() ?: 0
-        } catch (_: Throwable) {
-            0
-        }
+        userHandle.hashCode()
     }
 }
 
