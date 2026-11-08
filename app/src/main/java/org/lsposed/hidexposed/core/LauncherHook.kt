@@ -699,13 +699,39 @@ object LauncherHook {
         try {
             val listeners = XposedHelpers.getObjectField(launcherAppsImpl, "mListeners") as? RemoteCallbackList<*> ?: return
             val count = listeners.beginBroadcast()
+            val userId = getUserId(profile)
             try {
                 for (i in 0 until count) {
                     val listener = listeners.getBroadcastItem(i) as? IInterface ?: continue
                     for (pkg in changedPackages) {
-                        try {
-                            XposedHelpers.callMethod(listener, "onPackageChanged", profile, pkg)
-                        } catch (_: Throwable) {
+                        val isHidden = ConfigStore.shouldHidePackage(
+                            packageName = pkg,
+                            userId = userId,
+                            isDetectedXposedModule = true
+                        )
+
+                        if (isHidden) {
+                            // When hidden: notify removal so launcher immediately drops icon from drawer/workspace
+                            try {
+                                XposedHelpers.callMethod(listener, "onPackageRemoved", profile, pkg)
+                            } catch (_: Throwable) {
+                            }
+                            try {
+                                XposedHelpers.callMethod(listener, "onPackageChanged", profile, pkg)
+                            } catch (_: Throwable) {
+                            }
+                        } else {
+                            // When unhidden: notify addition so launcher model queries getLauncherActivities
+                            // and immediately inserts the restored icon. In AOSP Launcher3/OEM launchers,
+                            // onPackageChanged is ignored if the item is absent from the launcher's model!
+                            try {
+                                XposedHelpers.callMethod(listener, "onPackageAdded", profile, pkg)
+                            } catch (_: Throwable) {
+                            }
+                            try {
+                                XposedHelpers.callMethod(listener, "onPackageChanged", profile, pkg)
+                            } catch (_: Throwable) {
+                            }
                         }
                     }
                 }
