@@ -61,6 +61,10 @@ object ConfigStore {
     var showSystemApps: Boolean = true
         private set
 
+    @Volatile
+    var uiScale: Float = 1.0f
+        private set
+
     private val whitelistedPackages: MutableSet<String> = ConcurrentHashMap.newKeySet<String>().apply {
         add(SELF_USER0_KEY)
     }
@@ -236,6 +240,7 @@ object ConfigStore {
         amoledBlack = prefs.getBoolean("amoledBlack", false)
         dynamicColor = prefs.getBoolean("dynamicColor", true)
         showSystemApps = prefs.getBoolean("showSystemApps", true)
+        uiScale = prefs.getFloat("uiScale", 1.0f).coerceIn(0.90f, 1.15f)
 
         val rawWl = prefs.getStringSet("whitelist", setOf(SELF_USER0_KEY)) ?: setOf(SELF_USER0_KEY)
         val wl = rawWl.map { if (it == SELF_PACKAGE) SELF_USER0_KEY else it }.toSet()
@@ -252,19 +257,22 @@ object ConfigStore {
         theme: String = themeMode,
         amoled: Boolean = amoledBlack,
         dynamic: Boolean = dynamicColor,
-        showSystem: Boolean = showSystemApps
+        showSystem: Boolean = showSystemApps,
+        scale: Float = uiScale
     ) {
         appLanguage = language
         themeMode = theme
         amoledBlack = amoled
         dynamicColor = dynamic
         showSystemApps = showSystem
+        uiScale = scale.coerceIn(0.90f, 1.15f)
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
             .putString("appLanguage", language)
             .putString("themeMode", theme)
             .putBoolean("amoledBlack", amoled)
             .putBoolean("dynamicColor", dynamic)
             .putBoolean("showSystemApps", showSystem)
+            .putFloat("uiScale", uiScale)
             .apply()
     }
 

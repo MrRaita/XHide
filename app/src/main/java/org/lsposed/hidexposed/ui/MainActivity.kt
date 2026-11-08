@@ -64,19 +64,25 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import kotlin.math.roundToInt
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -104,6 +110,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -115,6 +122,7 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 private val appIconCache = ConcurrentHashMap<String, ImageBitmap>()
+private val xposedAppCache = ConcurrentHashMap<String, Boolean>()
 
 data class AppEntry(
     val userId: Int,
@@ -155,32 +163,46 @@ class MainActivity : ComponentActivity() {
             var themeMode by remember { mutableStateOf(ConfigStore.themeMode) }
             var amoledBlack by remember { mutableStateOf(ConfigStore.amoledBlack) }
             var dynamicColor by remember { mutableStateOf(ConfigStore.dynamicColor) }
+            var uiScale by remember { mutableStateOf(ConfigStore.uiScale) }
 
-            HideXposedTheme(
-                themeMode = themeMode,
-                amoledBlack = amoledBlack,
-                dynamicColor = dynamicColor
-            ) {
-                MainScreen(
-                    langCode = lang,
+            val density = LocalDensity.current
+            val customDensity = remember(density, uiScale) {
+                Density(
+                    density = density.density * uiScale,
+                    fontScale = density.fontScale
+                )
+            }
+
+            CompositionLocalProvider(LocalDensity provides customDensity) {
+                HideXposedTheme(
                     themeMode = themeMode,
                     amoledBlack = amoledBlack,
-                    dynamicColor = dynamicColor,
-                    onUpdateAppearance = { newLang, newTheme, newAmoled, newDynamic, newShowSys ->
-                        lang = newLang
-                        themeMode = newTheme
-                        amoledBlack = newAmoled
-                        dynamicColor = newDynamic
-                        ConfigStore.saveUiAppearancePrefs(
-                            context = this@MainActivity,
-                            language = newLang,
-                            theme = newTheme,
-                            amoled = newAmoled,
-                            dynamic = newDynamic,
-                            showSystem = newShowSys
-                        )
-                    }
-                )
+                    dynamicColor = dynamicColor
+                ) {
+                    MainScreen(
+                        langCode = lang,
+                        themeMode = themeMode,
+                        amoledBlack = amoledBlack,
+                        dynamicColor = dynamicColor,
+                        uiScale = uiScale,
+                        onUpdateAppearance = { newLang, newTheme, newAmoled, newDynamic, newShowSys, newScale ->
+                            lang = newLang
+                            themeMode = newTheme
+                            amoledBlack = newAmoled
+                            dynamicColor = newDynamic
+                            uiScale = newScale
+                            ConfigStore.saveUiAppearancePrefs(
+                                context = this@MainActivity,
+                                language = newLang,
+                                theme = newTheme,
+                                amoled = newAmoled,
+                                dynamic = newDynamic,
+                                showSystem = newShowSys,
+                                scale = newScale
+                            )
+                        }
+                    )
+                }
             }
         }
     }
@@ -192,7 +214,8 @@ fun MainScreen(
     themeMode: String,
     amoledBlack: Boolean,
     dynamicColor: Boolean,
-    onUpdateAppearance: (String, String, Boolean, Boolean, Boolean) -> Unit
+    uiScale: Float,
+    onUpdateAppearance: (String, String, Boolean, Boolean, Boolean, Float) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -269,14 +292,11 @@ fun MainScreen(
             if (apps.isEmpty()) isLoading = true
             else isRefreshing = true
 
-            val active = withContext(Dispatchers.IO) {
-                ConfigStore.pingSystemHook(context)
-            }
-            val loadedApps = withContext(Dispatchers.IO) {
-                loadInstalledAppsAcrossProfiles(context)
-            }
-            val launcher = withContext(Dispatchers.IO) {
-                detectDefaultLauncher(context)
+            val (active, loadedApps, launcher) = withContext(Dispatchers.IO) {
+                val activeDef = async { ConfigStore.pingSystemHook(context) }
+                val loadedAppsDef = async { loadInstalledAppsAcrossProfiles(context) }
+                val launcherDef = async { detectDefaultLauncher(context) }
+                Triple(activeDef.await(), loadedAppsDef.await(), launcherDef.await())
             }
             isHookActive = active
             apps = loadedApps
@@ -604,6 +624,7 @@ fun MainScreen(
                         themeMode = themeMode,
                         amoledBlack = amoledBlack,
                         dynamicColor = dynamicColor,
+                        uiScale = uiScale,
                         autoHideModules = autoHideModules,
                         autoHideCloneModules = autoHideCloneModules,
                         showSystemApps = showSystemApps,
@@ -635,10 +656,10 @@ fun MainScreen(
                         },
                         onToggleShowSystemApps = { showSys ->
                             showSystemApps = showSys
-                            onUpdateAppearance(langCode, themeMode, amoledBlack, dynamicColor, showSys)
+                            onUpdateAppearance(langCode, themeMode, amoledBlack, dynamicColor, showSys, uiScale)
                         },
-                        onUpdateAppearance = { newLang, newTheme, newAmoled, newDynamic ->
-                            onUpdateAppearance(newLang, newTheme, newAmoled, newDynamic, showSystemApps)
+                        onUpdateAppearance = { newLang, newTheme, newAmoled, newDynamic, newScale ->
+                            onUpdateAppearance(newLang, newTheme, newAmoled, newDynamic, showSystemApps, newScale)
                         },
                         onRequestExportFile = {
                             exportLauncher.launch("hidexposed_backup.json")
@@ -1055,6 +1076,15 @@ private fun AppsTabScreen(
     val hiddenCount = remember(apps, autoHideModules, autoHideCloneModules, whitelist, blacklist) {
         apps.count { isEntryHidden(it) }
     }
+    val userCounts = remember(apps, showSystemApps) {
+        val map = mutableMapOf<Int, Int>()
+        for (app in apps) {
+            if (showSystemApps || !app.isSystemApp || app.isXposedModule || app.userId != 0) {
+                map[app.userId] = (map[app.userId] ?: 0) + 1
+            }
+        }
+        map
+    }
 
     Column(
         modifier = Modifier
@@ -1137,9 +1167,7 @@ private fun AppsTabScreen(
                 onClick = { onFilterModeChange(FilterMode.HiddenOnly) }
             )
             for (uid in availableUserIds) {
-                val countForUser = apps.count {
-                    it.userId == uid && (showSystemApps || !it.isSystemApp || it.isXposedModule || it.userId != 0)
-                }
+                val countForUser = userCounts[uid] ?: 0
                 CompactFilterChip(
                     selected = (filterMode as? FilterMode.ByUser)?.userId == uid,
                     label = "User $uid ($countForUser)",
@@ -1165,92 +1193,101 @@ private fun AppsTabScreen(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 items(filteredApps, key = { it.uniqueKey }) { entry ->
-                    val isHidden = isEntryHidden(entry)
-
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable { onToggleAppHidden(entry, !isHidden) },
-                        shape = RoundedCornerShape(10.dp),
-                        tonalElevation = 1.dp
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 10.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            if (entry.icon != null) {
-                                Image(
-                                    bitmap = entry.icon,
-                                    contentDescription = entry.label,
-                                    modifier = Modifier
-                                        .size(34.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                            }
-
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = entry.label,
-                                        fontSize = 13.5.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f, fill = false)
-                                    )
-                                    if (entry.userId != 0) {
-                                        Spacer(modifier = Modifier.width(5.dp))
-                                        MiniBadge(
-                                            text = "User ${entry.userId}",
-                                            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                                            contentColor = MaterialTheme.colorScheme.onTertiaryContainer
-                                        )
-                                    }
-                                    if (entry.isXposedModule) {
-                                        Spacer(modifier = Modifier.width(5.dp))
-                                        MiniBadge(
-                                            text = "Xposed",
-                                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                                        )
-                                    }
-                                    if (entry.isSystemApp && !entry.isXposedModule) {
-                                        Spacer(modifier = Modifier.width(5.dp))
-                                        MiniBadge(
-                                            text = strings.badgeSystem,
-                                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                                Text(
-                                    text = entry.packageName,
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.width(6.dp))
-
-                            Switch(
-                                checked = isHidden,
-                                onCheckedChange = { hide ->
-                                    onToggleAppHidden(entry, hide)
-                                },
-                                modifier = Modifier
-                                    .scale(0.78f)
-                                    .height(28.dp)
-                            )
-                        }
-                    }
+                    AppItemRow(
+                        entry = entry,
+                        isHidden = isEntryHidden(entry),
+                        strings = strings,
+                        onToggle = { hide -> onToggleAppHidden(entry, hide) }
+                    )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun AppItemRow(
+    entry: AppEntry,
+    isHidden: Boolean,
+    strings: AppStrings,
+    onToggle: (Boolean) -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable { onToggle(!isHidden) },
+        shape = RoundedCornerShape(10.dp),
+        tonalElevation = 1.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (entry.icon != null) {
+                Image(
+                    bitmap = entry.icon,
+                    contentDescription = entry.label,
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = entry.label,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (entry.userId != 0) {
+                        Spacer(modifier = Modifier.width(5.dp))
+                        MiniBadge(
+                            text = "User ${entry.userId}",
+                            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                    }
+                    if (entry.isXposedModule) {
+                        Spacer(modifier = Modifier.width(5.dp))
+                        MiniBadge(
+                            text = "Xposed",
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
+                    if (entry.isSystemApp && !entry.isXposedModule) {
+                        Spacer(modifier = Modifier.width(5.dp))
+                        MiniBadge(
+                            text = strings.badgeSystem,
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Text(
+                    text = entry.packageName,
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(modifier = Modifier.width(6.dp))
+
+            Switch(
+                checked = isHidden,
+                onCheckedChange = onToggle,
+                modifier = Modifier.scale(0.95f)
+            )
         }
     }
 }
@@ -1299,6 +1336,7 @@ private fun SettingsTabScreen(
     themeMode: String,
     amoledBlack: Boolean,
     dynamicColor: Boolean,
+    uiScale: Float,
     autoHideModules: Boolean,
     autoHideCloneModules: Boolean,
     showSystemApps: Boolean,
@@ -1307,7 +1345,7 @@ private fun SettingsTabScreen(
     onToggleAutoHideClone: (Boolean) -> Unit,
     onToggleHideSelf: (Boolean) -> Unit,
     onToggleShowSystemApps: (Boolean) -> Unit,
-    onUpdateAppearance: (String, String, Boolean, Boolean) -> Unit,
+    onUpdateAppearance: (String, String, Boolean, Boolean, Float) -> Unit,
     onRequestExportFile: () -> Unit,
     onRequestImportFile: () -> Unit,
     onResetAll: () -> Unit
@@ -1318,6 +1356,8 @@ private fun SettingsTabScreen(
         "LIGHT" -> false
         else -> systemDark
     }
+
+    var localUiScale by remember(uiScale) { mutableFloatStateOf(uiScale) }
 
     Column(
         modifier = Modifier
@@ -1376,7 +1416,7 @@ private fun SettingsTabScreen(
                         selected = langCode == code,
                         label = if (code == "SYSTEM") strings.languageSystem else displayName,
                         onClick = {
-                            onUpdateAppearance(code, themeMode, amoledBlack, dynamicColor)
+                            onUpdateAppearance(code, themeMode, amoledBlack, dynamicColor, uiScale)
                         }
                     )
                 }
@@ -1404,7 +1444,7 @@ private fun SettingsTabScreen(
                         selected = themeMode == code,
                         label = label,
                         onClick = {
-                            onUpdateAppearance(langCode, code, amoledBlack, dynamicColor)
+                            onUpdateAppearance(langCode, code, amoledBlack, dynamicColor, uiScale)
                         }
                     )
                 }
@@ -1418,7 +1458,7 @@ private fun SettingsTabScreen(
                 enabled = isDarkEffective,
                 onCheckedChange = { checked ->
                     if (isDarkEffective) {
-                        onUpdateAppearance(langCode, themeMode, checked, dynamicColor)
+                        onUpdateAppearance(langCode, themeMode, checked, dynamicColor, uiScale)
                     }
                 }
             )
@@ -1428,9 +1468,81 @@ private fun SettingsTabScreen(
                 subtitle = strings.dynamicColorDesc,
                 checked = dynamicColor,
                 onCheckedChange = { checked ->
-                    onUpdateAppearance(langCode, themeMode, amoledBlack, checked)
+                    onUpdateAppearance(langCode, themeMode, amoledBlack, checked, uiScale)
                 }
             )
+
+            // Display Size / DPI Slider
+            HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), thickness = 0.5.dp)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = strings.uiScaleTitle,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = strings.uiScaleDesc,
+                            fontSize = 11.sp,
+                            lineHeight = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    val pct = (localUiScale * 100).roundToInt()
+                    val scaleBadgeText = if (pct == 100) "100% (${strings.defaultLabel})" else "$pct%"
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.clickable {
+                            if (localUiScale != 1.0f) {
+                                localUiScale = 1.0f
+                                onUpdateAppearance(langCode, themeMode, amoledBlack, dynamicColor, 1.0f)
+                            }
+                        }
+                    ) {
+                        Text(
+                            text = scaleBadgeText,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Slider(
+                        value = localUiScale,
+                        onValueChange = { newVal ->
+                            localUiScale = (newVal * 100f).roundToInt() / 100f
+                        },
+                        onValueChangeFinished = {
+                            onUpdateAppearance(langCode, themeMode, amoledBlack, dynamicColor, localUiScale)
+                        },
+                        valueRange = 0.90f..1.15f,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "A",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(end = 4.dp)
+                    )
+                }
+            }
         }
 
         // Section 3: Backup & Reset (SAF File Export / Import)
@@ -1469,7 +1581,7 @@ private fun SettingsTabScreen(
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
             CompactInfoRow(
                 title = strings.versionTitle,
-                value = "v1.0.2 (Android 11–17 Multi-User)"
+                value = "v1.0.3 (Android 11–17 Multi-User)"
             )
         }
 
@@ -1586,9 +1698,7 @@ private fun CompactSwitchRow(
             checked = checked,
             enabled = enabled,
             onCheckedChange = onCheckedChange,
-            modifier = Modifier
-                .scale(0.8f)
-                .height(28.dp)
+            modifier = Modifier.scale(0.95f)
         )
     }
 }
@@ -1738,6 +1848,7 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
                 pkg
             }
 
+            if (appIconCache.size > 1024) appIconCache.clear()
             val iconBitmap = appIconCache[key] ?: run {
                 val rawDrawable = try {
                     info.getBadgedIcon(0)
@@ -1791,17 +1902,25 @@ private fun drawableToImageBitmap(drawable: Drawable?, sizePx: Int = 96): ImageB
 }
 
 private fun detectIsXposedApp(appInfo: ApplicationInfo, pm: PackageManager): Boolean {
+    val pkg = appInfo.packageName ?: return false
+    val sourceDir = appInfo.sourceDir ?: ""
+    val cacheKey = "$pkg|$sourceDir"
+    xposedAppCache[cacheKey]?.let { return it }
+
     val meta = appInfo.metaData ?: try {
-        pm.getApplicationInfo(appInfo.packageName, PackageManager.GET_META_DATA).metaData
+        pm.getApplicationInfo(pkg, PackageManager.GET_META_DATA).metaData
     } catch (_: Throwable) {
         null
     }
-    return meta != null && (
+    val detected = meta != null && (
         meta.containsKey("xposedmodule") ||
             meta.containsKey("xposedminversion") ||
             meta.containsKey("xposeddescription") ||
             meta.containsKey("xposedscope")
     )
+    if (xposedAppCache.size > 2048) xposedAppCache.clear()
+    xposedAppCache[cacheKey] = detected
+    return detected
 }
 
 @Composable
