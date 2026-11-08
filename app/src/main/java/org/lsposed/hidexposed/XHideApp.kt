@@ -27,6 +27,10 @@ class XHideApp : Application() {
                 )
                 val crashFile = File(filesDir, "last_crash.txt")
                 crashFile.writeText(crashReport)
+                crashFile.setReadable(false, false)
+                crashFile.setReadable(true, true)
+                crashFile.setWritable(false, false)
+                crashFile.setWritable(true, true)
 
                 // Try to restart MainActivity with crash alert
                 val intent = Intent(this, MainActivity::class.java).apply {

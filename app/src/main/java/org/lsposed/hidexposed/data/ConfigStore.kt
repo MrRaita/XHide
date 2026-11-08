@@ -24,6 +24,13 @@ object ConfigStore {
 
     private const val SYSTEM_CONFIG_PATH = "/data/system/hidexposed_config.json"
     private const val PREFS_NAME = "hidexposed_prefs"
+    private const val MAX_IPC_PAYLOAD_CHARS = 512 * 1024
+    private const val MAX_ENTRIES = 4096
+    private val VALID_KEY_REGEX = Regex("^(?:\\d+:)?[a-zA-Z0-9._]{1,200}$")
+
+    fun isValidConfigKey(key: String): Boolean {
+        return key.length <= 220 && VALID_KEY_REGEX.matches(key)
+    }
 
     @Volatile
     var autoHideXposedModules: Boolean = true
@@ -107,6 +114,7 @@ object ConfigStore {
      * Returns the list of affected package names so `LauncherAppsImpl` can notify launchers across all users.
      */
     fun applySystemIpcUpdate(payload: String): List<String> {
+        if (payload.length > MAX_IPC_PAYLOAD_CHARS) return emptyList()
         return try {
             val json = JSONObject(payload)
             autoHideXposedModules = json.optBoolean("autoHide", true)
@@ -115,18 +123,20 @@ object ConfigStore {
             val newWhitelist = mutableSetOf<String>()
             val wlArray = json.optJSONArray("whitelist")
             if (wlArray != null) {
-                for (i in 0 until wlArray.length()) {
+                val limit = minOf(wlArray.length(), MAX_ENTRIES)
+                for (i in 0 until limit) {
                     val pkg = wlArray.optString(i)
-                    if (pkg.isNotBlank()) newWhitelist.add(pkg)
+                    if (isValidConfigKey(pkg)) newWhitelist.add(pkg)
                 }
             }
 
             val newBlacklist = mutableSetOf<String>()
             val blArray = json.optJSONArray("blacklist")
             if (blArray != null) {
-                for (i in 0 until blArray.length()) {
+                val limit = minOf(blArray.length(), MAX_ENTRIES)
+                for (i in 0 until limit) {
                     val pkg = blArray.optString(i)
-                    if (pkg.isNotBlank()) newBlacklist.add(pkg)
+                    if (isValidConfigKey(pkg)) newBlacklist.add(pkg)
                 }
             }
 
@@ -140,9 +150,10 @@ object ConfigStore {
             val changed = mutableSetOf<String>()
             val changedArray = json.optJSONArray("changed")
             if (changedArray != null) {
-                for (i in 0 until changedArray.length()) {
+                val limit = minOf(changedArray.length(), MAX_ENTRIES)
+                for (i in 0 until limit) {
                     val raw = changedArray.optString(i)
-                    if (raw.isNotBlank()) {
+                    if (isValidConfigKey(raw)) {
                         val pkgOnly = raw.substringAfter(':', raw)
                         changed.add(pkgOnly)
                     }
@@ -157,7 +168,7 @@ object ConfigStore {
     private fun loadFromSystemFile() {
         try {
             val file = File(SYSTEM_CONFIG_PATH)
-            if (!file.exists() || !file.canRead()) return
+            if (!file.exists() || !file.canRead() || file.length() > MAX_IPC_PAYLOAD_CHARS) return
             val json = JSONObject(file.readText())
             autoHideXposedModules = json.optBoolean("autoHide", true)
             autoHideCloneModules = json.optBoolean("autoHideClone", true)
@@ -165,9 +176,10 @@ object ConfigStore {
             whitelistedPackages.clear()
             val wlArray = json.optJSONArray("whitelist")
             if (wlArray != null) {
-                for (i in 0 until wlArray.length()) {
+                val limit = minOf(wlArray.length(), MAX_ENTRIES)
+                for (i in 0 until limit) {
                     val pkg = wlArray.optString(i)
-                    if (pkg.isNotBlank()) whitelistedPackages.add(pkg)
+                    if (isValidConfigKey(pkg)) whitelistedPackages.add(pkg)
                 }
             } else {
                 whitelistedPackages.add(SELF_USER0_KEY)
@@ -176,9 +188,10 @@ object ConfigStore {
             blacklistedPackages.clear()
             val blArray = json.optJSONArray("blacklist")
             if (blArray != null) {
-                for (i in 0 until blArray.length()) {
+                val limit = minOf(blArray.length(), MAX_ENTRIES)
+                for (i in 0 until limit) {
                     val pkg = blArray.optString(i)
-                    if (pkg.isNotBlank()) blacklistedPackages.add(pkg)
+                    if (isValidConfigKey(pkg)) blacklistedPackages.add(pkg)
                 }
             }
         } catch (_: Throwable) {
@@ -193,7 +206,21 @@ object ConfigStore {
                 put("whitelist", JSONArray(whitelistedPackages.toList()))
                 put("blacklist", JSONArray(blacklistedPackages.toList()))
             }
-            File(SYSTEM_CONFIG_PATH).writeText(json.toString())
+            val targetFile = File(SYSTEM_CONFIG_PATH)
+            val tmpFile = File("$SYSTEM_CONFIG_PATH.tmp")
+            tmpFile.writeText(json.toString())
+            tmpFile.setReadable(false, false)
+            tmpFile.setReadable(true, true)
+            tmpFile.setWritable(false, false)
+            tmpFile.setWritable(true, true)
+            if (!tmpFile.renameTo(targetFile)) {
+                targetFile.writeText(json.toString())
+                targetFile.setReadable(false, false)
+                targetFile.setReadable(true, true)
+                targetFile.setWritable(false, false)
+                targetFile.setWritable(true, true)
+                tmpFile.delete()
+            }
         } catch (_: Throwable) {
         }
     }

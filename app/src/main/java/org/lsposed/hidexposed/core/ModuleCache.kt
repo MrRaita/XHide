@@ -70,6 +70,10 @@ object ModuleCache {
         val cacheKey = "$packageName|$sourceDir"
         apkModuleCache[cacheKey]?.let { return it }
 
+        if (apkModuleCache.size > 2048) {
+            apkModuleCache.clear()
+        }
+
         val detected = detectModuleFromAppInfo(packageName, resolvedAppInfo, context, userHandle)
         apkModuleCache[cacheKey] = detected
         if (detected) {

@@ -207,7 +207,17 @@ fun MainScreen(
     var filterMode by remember { mutableStateOf<FilterMode>(FilterMode.AllApps) }
     var pendingCrashReport by remember {
         val f = File(context.filesDir, "last_crash.txt")
-        mutableStateOf(if (f.exists()) f.readText() else null)
+        mutableStateOf(
+            if (f.exists() && f.length() <= 256 * 1024) {
+                try {
+                    f.readText()
+                } catch (_: Throwable) {
+                    null
+                }
+            } else {
+                null
+            }
+        )
     }
 
     fun isEntryHidden(
@@ -347,8 +357,13 @@ fun MainScreen(
         if (uri != null) {
             scope.launch(Dispatchers.IO) {
                 try {
+                    val maxImportBytes = 512 * 1024
                     val jsonStr = context.contentResolver.openInputStream(uri)?.use { input ->
-                        input.bufferedReader(Charsets.UTF_8).readText()
+                        val bytes = input.readNBytes(maxImportBytes + 1)
+                        if (bytes.size > maxImportBytes) {
+                            throw IllegalArgumentException("Backup file too large")
+                        }
+                        String(bytes, Charsets.UTF_8)
                     } ?: throw IllegalArgumentException("Empty file")
 
                     val json = JSONObject(jsonStr)
@@ -357,17 +372,19 @@ fun MainScreen(
                     val newWl = mutableSetOf<String>()
                     val wlArr = json.optJSONArray("whitelist")
                     if (wlArr != null) {
-                        for (i in 0 until wlArr.length()) {
+                        val limit = minOf(wlArr.length(), 4096)
+                        for (i in 0 until limit) {
                             val s = wlArr.optString(i)
-                            if (s.isNotBlank()) newWl.add(s)
+                            if (ConfigStore.isValidConfigKey(s)) newWl.add(s)
                         }
                     }
                     val newBl = mutableSetOf<String>()
                     val blArr = json.optJSONArray("blacklist")
                     if (blArr != null) {
-                        for (i in 0 until blArr.length()) {
+                        val limit = minOf(blArr.length(), 4096)
+                        for (i in 0 until limit) {
                             val s = blArr.optString(i)
-                            if (s.isNotBlank()) newBl.add(s)
+                            if (ConfigStore.isValidConfigKey(s)) newBl.add(s)
                         }
                     }
                     val allPkgs = apps.map { it.packageName }.distinct()
@@ -412,7 +429,6 @@ fun MainScreen(
                         AppDiagnostics.openGitHubIssue(
                             context = context,
                             isHookActive = isHookActive,
-                            activeUserIds = availableUserIds,
                             userNotes = report
                         )
                     }
@@ -718,8 +734,7 @@ private fun HomeTabScreen(
                         onClick = {
                             AppDiagnostics.openGitHubIssue(
                                 context = context,
-                                isHookActive = false,
-                                activeUserIds = availableUserIds
+                                isHookActive = false
                             )
                         },
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
@@ -1436,7 +1451,7 @@ private fun SettingsTabScreen(
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
             CompactInfoRow(
                 title = strings.versionTitle,
-                value = "v1.0.0 (Android 11–17 Multi-User)"
+                value = "v1.0.1 (Android 11–17 Multi-User)"
             )
         }
 
@@ -1480,8 +1495,7 @@ private fun SettingsTabScreen(
                 onClick = {
                     AppDiagnostics.openGitHubIssue(
                         context = context,
-                        isHookActive = isHookActive,
-                        activeUserIds = availableUserIds
+                        isHookActive = isHookActive
                     )
                 }
             )

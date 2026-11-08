@@ -8,6 +8,7 @@ import android.content.pm.ResolveInfo
 import android.os.Binder
 import android.os.Handler
 import android.os.IInterface
+import android.os.Process
 import android.os.RemoteCallbackList
 import android.os.UserHandle
 import android.os.UserManager
@@ -42,9 +43,7 @@ object LauncherHook {
     private const val TARGET_CLASS = "com.android.server.pm.LauncherAppsService\$LauncherAppsImpl"
     private const val USER_MANAGER_SERVICE_CLASS = "com.android.server.pm.UserManagerService"
     private const val EXTRA_ALL_USERS_QUERY = "hidexposed_all_users_query"
-
-    @Volatile
-    private var cachedSelfUid: Int = -1
+    private const val PER_USER_RANGE = 100000
 
     fun install(classLoader: ClassLoader) {
         try {
@@ -78,7 +77,7 @@ object LauncherHook {
                 object : XC_MethodHook() {
                     override fun afterHookedMethod(param: MethodHookParam) {
                         try {
-                            if (!isCallerSelfApp(param.thisObject)) return
+                            if (!isCallerSelf(Binder.getCallingUid(), param.thisObject)) return
                             val existing = (param.result as? List<*>)
                                 ?.filterIsInstance<UserHandle>()
                                 ?: emptyList()
@@ -114,7 +113,7 @@ object LauncherHook {
                 object : XC_MethodHook() {
                     override fun afterHookedMethod(param: MethodHookParam) {
                         try {
-                            if (!isCallerSelfUid(Binder.getCallingUid(), param.thisObject)) return
+                            if (!isCallerSelf(Binder.getCallingUid(), param.thisObject)) return
                             val baseIds = param.result as? IntArray ?: IntArray(0)
                             val allUserIds = try {
                                 XposedHelpers.callMethod(param.thisObject, "getUserIds") as? IntArray
@@ -155,7 +154,7 @@ object LauncherHook {
                 object : XC_MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam) {
                         try {
-                            if (isCallerSelfApp(param.thisObject)) {
+                            if (isCallerSelf(Binder.getCallingUid(), param.thisObject)) {
                                 param.result = true
                             }
                         } catch (_: Throwable) {
@@ -179,7 +178,9 @@ object LauncherHook {
                 object : XC_MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam) {
                         try {
-                            if (isCallerSelfApp(param.thisObject)) {
+                            val binderUid = Binder.getCallingUid()
+                            val argUid = param.args[0] as? Int ?: binderUid
+                            if (argUid == binderUid && isCallerSelf(binderUid, param.thisObject)) {
                                 param.result = true
                             }
                         } catch (_: Throwable) {
@@ -200,7 +201,7 @@ object LauncherHook {
                 object : XC_MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam) {
                         try {
-                            if (isCallerSelfApp(param.thisObject)) {
+                            if (isCallerSelf(Binder.getCallingUid(), param.thisObject)) {
                                 param.result = null
                             }
                         } catch (_: Throwable) {
@@ -221,7 +222,9 @@ object LauncherHook {
                 object : XC_MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam) {
                         try {
-                            if (isCallerSelfApp(param.thisObject)) {
+                            val binderUid = Binder.getCallingUid()
+                            val argUid = param.args[0] as? Int ?: binderUid
+                            if (argUid == binderUid && isCallerSelf(binderUid, param.thisObject)) {
                                 param.result = true
                             }
                         } catch (_: Throwable) {
@@ -242,7 +245,9 @@ object LauncherHook {
                 object : XC_MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam) {
                         try {
-                            if (isCallerSelfApp(param.thisObject)) {
+                            val binderUid = Binder.getCallingUid()
+                            val argUid = param.args[1] as? Int ?: binderUid
+                            if (argUid == binderUid && isCallerSelf(binderUid, param.thisObject)) {
                                 param.result = true
                             }
                         } catch (_: Throwable) {
@@ -268,14 +273,17 @@ object LauncherHook {
                         val targetPackage = param.args[1] as? String ?: return
                         val userHandle = param.args[2] as? UserHandle
 
-                        if (callingPackage == ConfigStore.SELF_PACKAGE) {
-                            cachedSelfUid = Binder.getCallingUid()
-                        }
-
                         // Handle zero-lock IPC from our companion UI application
-                        if (callingPackage == ConfigStore.SELF_PACKAGE &&
-                            targetPackage.startsWith(ConfigStore.IPC_PREFIX)
-                        ) {
+                        if (targetPackage.startsWith(ConfigStore.IPC_PREFIX)) {
+                            val callingUid = Binder.getCallingUid()
+                            // Strictly reject IPC commands from unverified callers
+                            if (callingPackage != ConfigStore.SELF_PACKAGE ||
+                                !isCallerSelf(callingUid, param.thisObject)
+                            ) {
+                                param.result = emptyList<Any>()
+                                return
+                            }
+
                             when {
                                 targetPackage == ConfigStore.IPC_PING -> {
                                     param.args[1] = ConfigStore.SELF_PACKAGE
@@ -303,10 +311,11 @@ object LauncherHook {
                         val targetPackage = param.args[1] as? String
                         val userHandle = param.args[2] as? UserHandle
                         val userId = getUserId(userHandle)
+                        val callingUid = Binder.getCallingUid()
 
                         // If our companion UI requested all users' launcher activities in one call
-                        if (callingPackage == ConfigStore.SELF_PACKAGE &&
-                            param.getObjectExtra(EXTRA_ALL_USERS_QUERY) == true
+                        if (param.getObjectExtra(EXTRA_ALL_USERS_QUERY) == true &&
+                            isCallerSelf(callingUid, param.thisObject)
                         ) {
                             val slice = param.result ?: return
                             val baseList = extractListFromResult(slice) ?: emptyList<Any>()
@@ -326,7 +335,7 @@ object LauncherHook {
                         }
 
                         // Never filter queries coming from core system, our own UI, or Xposed managers
-                        if (isExemptCaller(callingPackage)) {
+                        if (isExemptCaller(callingPackage, callingUid, param.thisObject)) {
                             return
                         }
 
@@ -383,7 +392,8 @@ object LauncherHook {
                 try {
                     if (param.result == null) return
                     val callingPackage = param.args[0] as? String ?: return
-                    if (isExemptCaller(callingPackage)) return
+                    val callingUid = Binder.getCallingUid()
+                    if (isExemptCaller(callingPackage, callingUid, param.thisObject)) return
 
                     val component = param.args[1] as? ComponentName
                     val userHandle = param.args[2] as? UserHandle
@@ -445,7 +455,8 @@ object LauncherHook {
                         try {
                             if (param.result != true) return
                             val callingPackage = param.args[0] as? String ?: return
-                            if (isExemptCaller(callingPackage)) return
+                            val callingUid = Binder.getCallingUid()
+                            if (isExemptCaller(callingPackage, callingUid, param.thisObject)) return
 
                             val component = param.args[1] as? ComponentName ?: return
                             val userHandle = param.args[2] as? UserHandle
@@ -471,16 +482,10 @@ object LauncherHook {
         }
     }
 
-    private fun isExemptCaller(callingPackage: String): Boolean {
-        return callingPackage == "android" ||
-            callingPackage == ConfigStore.SELF_PACKAGE ||
-            ModuleCache.KNOWN_MANAGERS.contains(callingPackage)
-    }
-
-    private fun getContextFromImpl(launcherAppsImpl: Any?): Context? {
-        if (launcherAppsImpl == null) return null
+    private fun getContextFromImpl(serviceObject: Any?): Context? {
+        if (serviceObject == null) return null
         return try {
-            XposedHelpers.getObjectField(launcherAppsImpl, "mContext") as? Context
+            XposedHelpers.getObjectField(serviceObject, "mContext") as? Context
         } catch (_: Throwable) {
             null
         }
@@ -513,17 +518,25 @@ object LauncherHook {
         }
     }
 
-    private fun isCallerSelfApp(launcherAppsImpl: Any?): Boolean {
-        val callingUid = Binder.getCallingUid()
-        if (cachedSelfUid > 0 && callingUid == cachedSelfUid) return true
-        if (launcherAppsImpl == null) return false
+    private fun isExemptCaller(callingPackage: String, callingUid: Int, serviceObject: Any?): Boolean {
+        if (callingUid == Process.SYSTEM_UID || callingUid == 0) return true
+        if (callingPackage == ConfigStore.SELF_PACKAGE) {
+            return isCallerSelf(callingUid, serviceObject)
+        }
+        if (ModuleCache.KNOWN_MANAGERS.contains(callingPackage)) {
+            return isCallingUidPackage(callingUid, callingPackage, serviceObject)
+        }
+        return false
+    }
+
+    private fun isCallerSelf(callingUid: Int, serviceObject: Any?): Boolean {
+        val appId = callingUid % PER_USER_RANGE
+        if (appId < Process.FIRST_APPLICATION_UID) return false
+        val context = getContextFromImpl(serviceObject) ?: return false
         val token = Binder.clearCallingIdentity()
         return try {
-            val context = XposedHelpers.getObjectField(launcherAppsImpl, "mContext") as? Context ?: return false
-            val pkgs = context.packageManager.getPackagesForUid(callingUid) ?: return false
-            val match = pkgs.contains(ConfigStore.SELF_PACKAGE)
-            if (match) cachedSelfUid = callingUid
-            match
+            val pkgs = context.packageManager.getPackagesForUid(callingUid)
+            pkgs?.contains(ConfigStore.SELF_PACKAGE) == true
         } catch (_: Throwable) {
             false
         } finally {
@@ -531,16 +544,15 @@ object LauncherHook {
         }
     }
 
-    private fun isCallerSelfUid(callingUid: Int, userManagerService: Any?): Boolean {
-        if (cachedSelfUid > 0 && callingUid == cachedSelfUid) return true
-        if (userManagerService == null) return false
+    private fun isCallingUidPackage(callingUid: Int, expectedPackage: String, serviceObject: Any?): Boolean {
+        if (callingUid == Process.SYSTEM_UID || callingUid == 0) return true
+        val appId = callingUid % PER_USER_RANGE
+        if (appId < Process.FIRST_APPLICATION_UID) return false
+        val context = getContextFromImpl(serviceObject) ?: return false
         val token = Binder.clearCallingIdentity()
         return try {
-            val context = XposedHelpers.getObjectField(userManagerService, "mContext") as? Context ?: return false
-            val pkgs = context.packageManager.getPackagesForUid(callingUid) ?: return false
-            val match = pkgs.contains(ConfigStore.SELF_PACKAGE)
-            if (match) cachedSelfUid = callingUid
-            match
+            val pkgs = context.packageManager.getPackagesForUid(callingUid)
+            pkgs?.contains(expectedPackage) == true
         } catch (_: Throwable) {
             false
         } finally {
