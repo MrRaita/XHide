@@ -239,6 +239,7 @@ fun MainScreen(
     // Default filter mode is AllApps ("Tümü") as requested
     var filterMode by remember { mutableStateOf<FilterMode>(FilterMode.AllApps) }
     var pendingCrashReport by remember {
+        val hasCrashExtra = (context as? android.app.Activity)?.intent?.getBooleanExtra("has_crash_report", false) == true
         val f = File(context.filesDir, "last_crash.txt")
         mutableStateOf(
             if (f.exists() && f.length() <= 256 * 1024) {
@@ -450,6 +451,7 @@ fun MainScreen(
         AlertDialog(
             onDismissRequest = {
                 File(context.filesDir, "last_crash.txt").delete()
+                (context as? android.app.Activity)?.intent?.removeExtra("has_crash_report")
                 pendingCrashReport = null
             },
             title = { Text(strings.crashDetectedTitle, fontWeight = FontWeight.Bold) },
@@ -459,6 +461,7 @@ fun MainScreen(
                     onClick = {
                         val report = pendingCrashReport
                         File(context.filesDir, "last_crash.txt").delete()
+                        (context as? android.app.Activity)?.intent?.removeExtra("has_crash_report")
                         pendingCrashReport = null
                         AppDiagnostics.openGitHubIssue(
                             context = context,
@@ -474,6 +477,7 @@ fun MainScreen(
                 TextButton(
                     onClick = {
                         File(context.filesDir, "last_crash.txt").delete()
+                        (context as? android.app.Activity)?.intent?.removeExtra("has_crash_report")
                         pendingCrashReport = null
                     }
                 ) {
