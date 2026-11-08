@@ -1648,21 +1648,25 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
     val entriesMap = LinkedHashMap<String, AppEntry>()
 
     // 1. Query all launcher activities across all profiles (User 0, User 10 Clone/Work Profile, etc.)
+    // Query each UserHandle individually first so Android 11 & 12 convertToActivityList preserves each profile's UserHandle.
     if (launcherApps != null) {
         val allActivities = mutableListOf<android.content.pm.LauncherActivityInfo>()
-        try {
-            val fromIpc = launcherApps.getActivityList(ConfigStore.IPC_GET_ALL_USERS, Process.myUserHandle())
-            if (fromIpc != null && fromIpc.size > 1) {
-                allActivities.addAll(fromIpc)
-            }
-        } catch (_: Throwable) {
-        }
-
         for (profile in profiles) {
             try {
                 val list = launcherApps.getActivityList(null, profile)
                 if (!list.isNullOrEmpty()) {
                     allActivities.addAll(list)
+                }
+            } catch (_: Throwable) {
+            }
+        }
+
+        // Fallback if only 1 profile was returned by UserManager
+        if (profiles.size <= 1) {
+            try {
+                val fromIpc = launcherApps.getActivityList(ConfigStore.IPC_GET_ALL_USERS, Process.myUserHandle())
+                if (fromIpc != null && fromIpc.size > 1) {
+                    allActivities.addAll(fromIpc)
                 }
             } catch (_: Throwable) {
             }
@@ -1687,11 +1691,20 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
                 pkg
             }
 
-            val iconBitmap = try {
-                drawableToImageBitmap(info.getBadgedIcon(0), 96)
+            val rawDrawable = try {
+                info.getBadgedIcon(0)
             } catch (_: Throwable) {
-                null
+                try {
+                    info.getIcon(0)
+                } catch (_: Throwable) {
+                    try {
+                        appInfo.loadIcon(pm)
+                    } catch (_: Throwable) {
+                        null
+                    }
+                }
             }
+            val iconBitmap = drawableToImageBitmap(rawDrawable, 96)
 
             entriesMap[key] = AppEntry(
                 userId = userId,
@@ -1778,8 +1791,13 @@ private fun detectIsXposedApp(appInfo: ApplicationInfo, pm: PackageManager): Boo
         return true
     }
 
-    val src = appInfo.sourceDir
-    if (!src.isNullOrEmpty()) {
+    val apkPaths = LinkedHashSet<String>()
+    appInfo.sourceDir?.let { if (it.isNotEmpty()) apkPaths.add(it) }
+    appInfo.publicSourceDir?.let { if (it.isNotEmpty()) apkPaths.add(it) }
+    appInfo.splitSourceDirs?.forEach { if (!it.isNullOrEmpty()) apkPaths.add(it) }
+    appInfo.splitPublicSourceDirs?.forEach { if (!it.isNullOrEmpty()) apkPaths.add(it) }
+
+    for (src in apkPaths) {
         try {
             val file = File(src)
             if (file.exists() && file.canRead()) {

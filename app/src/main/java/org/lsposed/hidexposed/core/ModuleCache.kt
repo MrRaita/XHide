@@ -14,10 +14,11 @@ import java.util.zip.ZipFile
 /**
  * Universal O(1) Xposed Module Detector.
  *
- * Detects all 3 generations of Xposed modules:
+ * Detects all 3 generations of Xposed modules across Android 11–17 (including split APKs
+ * and disguised package names such as `com.android.hmal`):
  * 1. Manifest Meta-Data (`xposedmodule`, `xposedminversion`, `xposeddescription`, `xposedscope`)
- * 2. Classic Xposed API (`assets/xposed_init` inside APK)
- * 3. Modern LibXposed API 100 (`META-INF/xposed/module.prop` or `META-INF/xposed/java_init.list` inside APK)
+ * 2. Classic Xposed API (`assets/xposed_init` inside base or split APK)
+ * 3. Modern LibXposed API 100 (`META-INF/xposed/module.prop`, `java_init.list`, `scope.list`)
  *
  * Keyed by `packageName|sourceDir` so package updates automatically invalidate stale entries
  * without requiring broadcast receivers or locking PackageManager.
@@ -34,10 +35,14 @@ object ModuleCache {
         "io.github.lsposed.manager",
         "org.lsposed.vector",
         "io.github.vector",
+        "org.lsposed.lspatch",
         "de.robv.android.xposed.installer",
         "org.meowcat.edxposed.manager",
         "me.weishu.kernelsu",
-        "com.rifsxd.ksunext"
+        "com.rifsxd.ksunext",
+        "com.topjohnwu.magisk",
+        "io.github.vvb2060.magisk",
+        "me.bmax.apatch"
     )
 
     fun isXposedModule(
@@ -46,14 +51,23 @@ object ModuleCache {
         context: Context?,
         userHandle: UserHandle?
     ): Boolean {
-        if (packageName == "android" || packageName.startsWith("com.android.") || KNOWN_MANAGERS.contains(packageName)) {
+        if (packageName == "android" || KNOWN_MANAGERS.contains(packageName)) {
             return false
         }
 
-        val resolvedAppInfo = appInfo ?: resolveAppInfoSafely(packageName, context, userHandle)
-        val sourceDir = resolvedAppInfo?.sourceDir ?: return false
-        val cacheKey = "$packageName|$sourceDir"
+        val resolvedAppInfo = (appInfo ?: resolveAppInfoSafely(packageName, context, userHandle)) ?: return false
+        val sourceDir = resolvedAppInfo.sourceDir ?: resolvedAppInfo.publicSourceDir ?: return false
 
+        // Skip unmodified built-in ROM partition apps (/system, /product, /system_ext, /vendor, /apex)
+        // while allowing any user-installed or updated app in /data/ (even if named com.android.*)
+        val isPureRomSystemApp = (resolvedAppInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0 &&
+            (resolvedAppInfo.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0 &&
+            !sourceDir.startsWith("/data/")
+        if (isPureRomSystemApp) {
+            return false
+        }
+
+        val cacheKey = "$packageName|$sourceDir"
         apkModuleCache[cacheKey]?.let { return it }
 
         val detected = detectModuleFromAppInfo(packageName, resolvedAppInfo, context, userHandle)
@@ -95,7 +109,7 @@ object ModuleCache {
         }
     }
 
-    private fun detectModuleFromAppInfo(
+    fun detectModuleFromAppInfo(
         packageName: String,
         appInfo: ApplicationInfo,
         context: Context?,
@@ -116,11 +130,17 @@ object ModuleCache {
         } catch (_: Throwable) {
         }
 
-        // Tier 2 & 3: Inspect APK zip entries for classic (assets/xposed_init) and modern (META-INF/xposed/*)
-        val sourcePath = appInfo.sourceDir
-        if (!sourcePath.isNullOrEmpty()) {
+        // Tier 2 & 3: Inspect base and split APK zip entries for classic (assets/xposed_init)
+        // and modern LibXposed API 100 (META-INF/xposed/*)
+        val apkPaths = LinkedHashSet<String>()
+        appInfo.sourceDir?.let { if (it.isNotEmpty()) apkPaths.add(it) }
+        appInfo.publicSourceDir?.let { if (it.isNotEmpty()) apkPaths.add(it) }
+        appInfo.splitSourceDirs?.forEach { if (!it.isNullOrEmpty()) apkPaths.add(it) }
+        appInfo.splitPublicSourceDirs?.forEach { if (!it.isNullOrEmpty()) apkPaths.add(it) }
+
+        for (path in apkPaths) {
             try {
-                val apkFile = File(sourcePath)
+                val apkFile = File(path)
                 if (apkFile.exists() && apkFile.canRead()) {
                     ZipFile(apkFile).use { zip ->
                         if (zip.getEntry("assets/xposed_init") != null ||
