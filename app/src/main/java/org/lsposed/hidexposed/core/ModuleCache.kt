@@ -74,17 +74,20 @@ object ModuleCache {
         return try {
             val pm = context.packageManager
             if (userHandle != null) {
-                val userId = XposedHelpers.callMethod(userHandle, "getIdentifier") as Int
-                XposedHelpers.callMethod(
-                    pm,
-                    "getApplicationInfoAsUser",
-                    packageName,
-                    PackageManager.GET_META_DATA,
-                    userId
-                ) as? ApplicationInfo
-            } else {
-                pm.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
+                try {
+                    val userId = XposedHelpers.callMethod(userHandle, "getIdentifier") as Int
+                    val info = XposedHelpers.callMethod(
+                        pm,
+                        "getApplicationInfoAsUser",
+                        packageName,
+                        PackageManager.GET_META_DATA,
+                        userId
+                    ) as? ApplicationInfo
+                    if (info != null) return info
+                } catch (_: Throwable) {
+                }
             }
+            pm.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
         } catch (_: Throwable) {
             null
         } finally {

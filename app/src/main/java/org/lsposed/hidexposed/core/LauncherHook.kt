@@ -3,8 +3,11 @@ package org.lsposed.hidexposed.core
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.pm.ResolveInfo
 import android.os.Binder
 import android.os.Handler
+import android.os.IInterface
+import android.os.RemoteCallbackList
 import android.os.UserHandle
 import android.os.UserManager
 import de.robv.android.xposed.XC_MethodHook
@@ -16,11 +19,12 @@ import java.util.ArrayList
 /**
  * System-level hook targeting `com.android.server.pm.LauncherAppsService$LauncherAppsImpl`.
  *
- * Hooks:
+ * Compatible with Android 11 (SDK 30) through Android 17 (SDK 37+):
  * 1. `getUserProfiles()` — Ensures our companion UI receives all user profiles on the device
  *    (User 0, User 10 Clone Profile, Work Profile, Dual Apps, Private Space, Secondary Users).
- * 2. `canAccessProfile(int, String)` — Grants our companion UI permission to inspect launcher
- *    activities and badged icons across all profiles without requiring system signature permissions.
+ * 2. `canAccessProfile(int, String)` (Android 13–17), `ensureInUserProfiles(int, String)` (Android 11–12),
+ *    and `canAccessHiddenProfile(int, int)` (Android 15–17 Private Space) — Grants our companion UI
+ *    permission to inspect launcher activities and badged icons across all profiles.
  * 3. `getLauncherActivities(String, String, UserHandle)` — Filters hidden Xposed modules and
  *    per-user blacklisted apps from all launchers while keeping them visible to Xposed managers.
  */
@@ -38,7 +42,7 @@ object LauncherHook {
             }
 
             hookGetUserProfiles(clazz)
-            hookCanAccessProfile(clazz)
+            hookProfileAccessChecks(clazz)
             hookGetLauncherActivities(clazz)
 
             XposedBridge.log("[$TAG] Successfully installed system hooks on $TARGET_CLASS")
@@ -80,11 +84,13 @@ object LauncherHook {
     }
 
     /**
-     * Hooks `LauncherAppsImpl#canAccessProfile(int, String)` so that `XHide` can query
-     * `getActivityList(null, userHandle)` and load badged icons for any user ID (User 10, Work,
-     * Private Space, Dual Apps, etc.) without failing cross-profile checks.
+     * Hooks profile access checks across Android 11–17:
+     * - `canAccessProfile(int, String)` (Android 13–17)
+     * - `ensureInUserProfiles(int, String)` (Android 11–12)
+     * - `canAccessHiddenProfile(int, int)` (Android 15–17 Private Space / Clone profiles)
      */
-    private fun hookCanAccessProfile(clazz: Class<*>) {
+    private fun hookProfileAccessChecks(clazz: Class<*>) {
+        // Android 13–17: boolean canAccessProfile(int targetUserId, String message)
         try {
             XposedHelpers.findAndHookMethod(
                 clazz,
@@ -102,8 +108,49 @@ object LauncherHook {
                     }
                 }
             )
-        } catch (t: Throwable) {
-            XposedBridge.log("[$TAG] Could not hook canAccessProfile: ${t.message}")
+        } catch (_: Throwable) {
+        }
+
+        // Android 11–12: void ensureInUserProfiles(int targetUserId, String message)
+        try {
+            XposedHelpers.findAndHookMethod(
+                clazz,
+                "ensureInUserProfiles",
+                Int::class.javaPrimitiveType,
+                String::class.java,
+                object : XC_MethodHook() {
+                    override fun beforeHookedMethod(param: MethodHookParam) {
+                        try {
+                            if (isCallerSelfApp(param.thisObject)) {
+                                param.result = null
+                            }
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
+            )
+        } catch (_: Throwable) {
+        }
+
+        // Android 15–17: boolean canAccessHiddenProfile(int callingUid, int callingPid)
+        try {
+            XposedHelpers.findAndHookMethod(
+                clazz,
+                "canAccessHiddenProfile",
+                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType,
+                object : XC_MethodHook() {
+                    override fun beforeHookedMethod(param: MethodHookParam) {
+                        try {
+                            if (isCallerSelfApp(param.thisObject)) {
+                                param.result = true
+                            }
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
+            )
+        } catch (_: Throwable) {
         }
     }
 
@@ -158,7 +205,7 @@ object LauncherHook {
                             param.getObjectExtra(EXTRA_ALL_USERS_QUERY) == true
                         ) {
                             val slice = param.result ?: return
-                            val baseList = (XposedHelpers.callMethod(slice, "getList") as? List<*>) ?: emptyList<Any>()
+                            val baseList = extractListFromResult(slice) ?: emptyList<Any>()
                             val combined = ArrayList<Any>(baseList.filterNotNull())
                             val profiles = collectAllUserHandles(param.thisObject, userHandle)
 
@@ -170,7 +217,7 @@ object LauncherHook {
                                 }
                             }
 
-                            param.result = XposedHelpers.newInstance(slice.javaClass, combined)
+                            param.result = rebuildResultSlice(slice, combined)
                             return
                         }
 
@@ -183,7 +230,7 @@ object LauncherHook {
                         }
 
                         val slice = param.result ?: return
-                        val rawList = XposedHelpers.callMethod(slice, "getList") as? List<*> ?: return
+                        val rawList = extractListFromResult(slice) ?: return
                         if (rawList.isEmpty()) return
 
                         val context = try {
@@ -216,7 +263,7 @@ object LauncherHook {
                         }
 
                         if (modified) {
-                            param.result = XposedHelpers.newInstance(slice.javaClass, filteredList)
+                            param.result = rebuildResultSlice(slice, filteredList)
                         }
                     } catch (t: Throwable) {
                         XposedBridge.log("[$TAG] Fail-safe catch in afterHookedMethod: ${t.message}")
@@ -224,6 +271,33 @@ object LauncherHook {
                 }
             }
         )
+    }
+
+    private fun extractListFromResult(resultObj: Any): List<*>? {
+        if (resultObj is List<*>) return resultObj
+        return try {
+            XposedHelpers.callMethod(resultObj, "getList") as? List<*>
+        } catch (_: Throwable) {
+            try {
+                XposedHelpers.getObjectField(resultObj, "mList") as? List<*>
+            } catch (_: Throwable) {
+                null
+            }
+        }
+    }
+
+    private fun rebuildResultSlice(originalResult: Any, newList: ArrayList<Any>): Any {
+        if (originalResult is List<*>) return newList
+        return try {
+            XposedHelpers.newInstance(originalResult.javaClass, newList)
+        } catch (_: Throwable) {
+            try {
+                XposedHelpers.setObjectField(originalResult, "mList", newList)
+                originalResult
+            } catch (_: Throwable) {
+                originalResult
+            }
+        }
     }
 
     private fun isCallerSelfApp(launcherAppsImpl: Any?): Boolean {
@@ -265,7 +339,7 @@ object LauncherHook {
                     profile
                 )
                 if (slice != null) {
-                    val list = XposedHelpers.callMethod(slice, "getList") as? List<*>
+                    val list = extractListFromResult(slice)
                     if (!list.isNullOrEmpty()) return list
                 }
             } catch (_: Throwable) {
@@ -280,7 +354,7 @@ object LauncherHook {
                     profile
                 )
                 if (slice != null) {
-                    val list = XposedHelpers.callMethod(slice, "getList") as? List<*>
+                    val list = extractListFromResult(slice)
                     if (!list.isNullOrEmpty()) return list
                 }
             } catch (_: Throwable) {
@@ -303,18 +377,36 @@ object LauncherHook {
         }
     }
 
-    private fun extractActivityInfo(launcherActivityInfoInternal: Any): ActivityInfo? {
+    /**
+     * Supports:
+     * - `LauncherActivityInfoInternal` (Android 11–17: `getActivityInfo()` / `mActivityInfo`)
+     * - `ResolveInfo` (Android 10 / legacy custom ROMs: `activityInfo`)
+     * - Direct `ActivityInfo`
+     */
+    private fun extractActivityInfo(item: Any): ActivityInfo? {
+        if (item is ActivityInfo) return item
+        if (item is ResolveInfo) return item.activityInfo
         return try {
-            XposedHelpers.callMethod(launcherActivityInfoInternal, "getActivityInfo") as? ActivityInfo
+            XposedHelpers.callMethod(item, "getActivityInfo") as? ActivityInfo
         } catch (_: Throwable) {
             try {
-                XposedHelpers.getObjectField(launcherActivityInfoInternal, "mActivityInfo") as? ActivityInfo
+                XposedHelpers.getObjectField(item, "mActivityInfo") as? ActivityInfo
             } catch (_: Throwable) {
-                null
+                try {
+                    XposedHelpers.getObjectField(item, "activityInfo") as? ActivityInfo
+                } catch (_: Throwable) {
+                    null
+                }
             }
         }
     }
 
+    /**
+     * Notifies all registered launchers across all user profiles on Android 11–17:
+     * 1. First attempts `MyPackageMonitor#onPackageChanged(String, UserHandle)` (Android 12–17).
+     * 2. Falls back to broadcasting `IOnAppsChangedListener#onPackageChanged(UserHandle, String)`
+     *    directly via `LauncherAppsImpl#mListeners` (Android 11–17 universal).
+     */
     private fun notifyLaunchersOfChanges(
         launcherAppsImpl: Any?,
         changedPackages: List<String>,
@@ -322,16 +414,23 @@ object LauncherHook {
     ) {
         if (launcherAppsImpl == null || changedPackages.isEmpty()) return
         try {
-            val monitor = XposedHelpers.getObjectField(launcherAppsImpl, "mPackageMonitor") ?: return
+            val monitor = XposedHelpers.getObjectField(launcherAppsImpl, "mPackageMonitor")
             val handler = XposedHelpers.getObjectField(launcherAppsImpl, "mCallbackHandler") as? Handler
             val profiles = collectAllUserHandles(launcherAppsImpl, fallbackUserHandle)
 
             val task = Runnable {
                 for (profile in profiles) {
                     for (pkg in changedPackages) {
-                        try {
-                            XposedHelpers.callMethod(monitor, "onPackageChanged", pkg, profile)
-                        } catch (_: Throwable) {
+                        var notified = false
+                        if (monitor != null) {
+                            try {
+                                XposedHelpers.callMethod(monitor, "onPackageChanged", pkg, profile)
+                                notified = true
+                            } catch (_: Throwable) {
+                            }
+                        }
+                        if (!notified) {
+                            broadcastOnPackageChangedFallback(launcherAppsImpl, profile, pkg)
                         }
                     }
                 }
@@ -345,13 +444,36 @@ object LauncherHook {
         }
     }
 
+    private fun broadcastOnPackageChangedFallback(
+        launcherAppsImpl: Any,
+        profile: UserHandle,
+        pkg: String
+    ) {
+        try {
+            val listeners = XposedHelpers.getObjectField(launcherAppsImpl, "mListeners") as? RemoteCallbackList<*> ?: return
+            val count = listeners.beginBroadcast()
+            try {
+                for (i in 0 until count) {
+                    val listener = listeners.getBroadcastItem(i) as? IInterface ?: continue
+                    try {
+                        XposedHelpers.callMethod(listener, "onPackageChanged", profile, pkg)
+                    } catch (_: Throwable) {
+                    }
+                }
+            } finally {
+                listeners.finishBroadcast()
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
     private fun collectAllUserHandles(launcherAppsImpl: Any, fallbackUserHandle: UserHandle?): List<UserHandle> {
         val handles = LinkedHashSet<UserHandle>()
         if (fallbackUserHandle != null) handles.add(fallbackUserHandle)
 
         val token = Binder.clearCallingIdentity()
         try {
-            // 1. UserManagerInternal#getUserIds() -> returns all existing user IDs on the device
+            // 1. UserManagerInternal#getUserIds() -> returns all existing user IDs on Android 11–17
             try {
                 val umInternal = XposedHelpers.getObjectField(launcherAppsImpl, "mUserManagerInternal")
                 if (umInternal != null) {
@@ -366,7 +488,7 @@ object LauncherHook {
             } catch (_: Throwable) {
             }
 
-            // 2. UserManager#getUsers() -> fallback for any custom/older ROMs
+            // 2. UserManager#getUsers() -> fallback across AOSP & OEM ROMs
             try {
                 val um = XposedHelpers.getObjectField(launcherAppsImpl, "mUm") as? UserManager
                 if (um != null) {

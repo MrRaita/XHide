@@ -9,10 +9,10 @@ android {
 
     defaultConfig {
         applicationId = "org.lsposed.hidexposed"
-        minSdk = 29
-        targetSdk = 36
-        versionCode = 100
-        versionName = "1.0.0"
+        minSdk = 30
+        targetSdk = 37
+        versionCode = 110
+        versionName = "1.1.0"
     }
 
     buildTypes {
