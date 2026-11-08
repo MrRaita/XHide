@@ -1834,7 +1834,7 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
             val key = ConfigStore.userKey(userId, pkg)
             if (entriesMap.containsKey(key)) continue
 
-            val isXposed = detectIsXposedApp(appInfo, pm)
+            val isXposed = detectIsXposedApp(appInfo, pm, info.user)
             val isSystem = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0 &&
                 (appInfo.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0
 
@@ -1897,26 +1897,64 @@ private fun drawableToImageBitmap(drawable: Drawable?, sizePx: Int = 96): ImageB
     }
 }
 
-private fun detectIsXposedApp(appInfo: ApplicationInfo, pm: PackageManager): Boolean {
+private fun detectIsXposedApp(appInfo: ApplicationInfo, pm: PackageManager, userHandle: UserHandle? = null): Boolean {
     val pkg = appInfo.packageName ?: return false
     val sourceDir = appInfo.sourceDir ?: ""
     val cacheKey = "$pkg|$sourceDir"
     xposedAppCache[cacheKey]?.let { return it }
 
-    val meta = appInfo.metaData ?: try {
-        pm.getApplicationInfo(pkg, PackageManager.GET_META_DATA).metaData
-    } catch (_: Throwable) {
-        null
+    var metaChecked = false
+    var meta = appInfo.metaData
+    if (meta == null) {
+        try {
+            meta = pm.getApplicationInfo(pkg, PackageManager.GET_META_DATA).metaData
+            metaChecked = true
+        } catch (_: Throwable) {
+            // Do not poison negative cache if metadata resolution failed
+            return false
+        }
+    } else {
+        metaChecked = true
     }
-    val detected = meta != null && (
+
+    val isModule = meta != null && (
         meta.containsKey("xposedmodule") ||
             meta.containsKey("xposedminversion") ||
             meta.containsKey("xposeddescription") ||
-            meta.containsKey("xposedscope")
+            meta.containsKey("xposedscope") ||
+            meta.containsKey("libxposed") ||
+            meta.containsKey("libxposed_minversion") ||
+            meta.containsKey("libxposed_api") ||
+            meta.containsKey("libxposed_scope")
     )
-    if (xposedAppCache.size > 2048) xposedAppCache.clear()
-    xposedAppCache[cacheKey] = detected
-    return detected
+
+    if (isModule) {
+        if (xposedAppCache.size > 2048) xposedAppCache.clear()
+        xposedAppCache[cacheKey] = true
+        return true
+    }
+
+    // Fast check for modern LibXposed module.prop or classic xposed_init
+    if (sourceDir.startsWith("/data/")) {
+        try {
+            java.util.zip.ZipFile(File(sourceDir)).use { zip ->
+                if (zip.getEntry("META-INF/xposed/module.prop") != null ||
+                    zip.getEntry("assets/xposed_init") != null
+                ) {
+                    if (xposedAppCache.size > 2048) xposedAppCache.clear()
+                    xposedAppCache[cacheKey] = true
+                    return true
+                }
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
+    if (metaChecked) {
+        if (xposedAppCache.size > 2048) xposedAppCache.clear()
+        xposedAppCache[cacheKey] = false
+    }
+    return false
 }
 
 @Composable

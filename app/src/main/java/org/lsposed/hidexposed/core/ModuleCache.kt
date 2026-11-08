@@ -91,7 +91,7 @@ object ModuleCache {
             val pm = context.packageManager
             if (userHandle != null) {
                 try {
-                    val userId = XposedHelpers.callMethod(userHandle, "getIdentifier") as Int
+                    val userId = XposedHelpers.callMethod(userHandle, "getIdentifier") as? Int ?: userHandle.hashCode()
                     val info = XposedHelpers.callMethod(
                         pm,
                         "getApplicationInfoAsUser",
@@ -102,8 +102,11 @@ object ModuleCache {
                     if (info != null) return info
                 } catch (_: Throwable) {
                 }
+                // Do not leak User 0 info when resolving for a non-null secondary profile
+                null
+            } else {
+                pm.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
             }
-            pm.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
         } catch (_: Throwable) {
             null
         } finally {
@@ -117,19 +120,38 @@ object ModuleCache {
         context: Context?,
         userHandle: UserHandle?
     ): Boolean {
-        // Fast manifest meta-data check - 100% of modern Xposed / LSPosed / Vector modules declare this
+        // 1. Fast manifest meta-data check (Classic Xposed & Modern LibXposed)
         try {
             val meta = appInfo?.metaData ?: resolveAppInfoSafely(packageName, context, userHandle)?.metaData
             if (meta != null) {
                 if (meta.containsKey("xposedmodule") ||
                     meta.containsKey("xposedminversion") ||
                     meta.containsKey("xposeddescription") ||
-                    meta.containsKey("xposedscope")
+                    meta.containsKey("xposedscope") ||
+                    meta.containsKey("libxposed") ||
+                    meta.containsKey("libxposed_minversion") ||
+                    meta.containsKey("libxposed_api") ||
+                    meta.containsKey("libxposed_scope")
                 ) {
                     return true
                 }
             }
         } catch (_: Throwable) {
+        }
+
+        // 2. Fast APK central directory inspection for modern LibXposed module.prop or classic xposed_init
+        val sourceDir = appInfo.sourceDir ?: appInfo.publicSourceDir
+        if (sourceDir != null && sourceDir.startsWith("/data/")) {
+            try {
+                java.util.zip.ZipFile(java.io.File(sourceDir)).use { zip ->
+                    if (zip.getEntry("META-INF/xposed/module.prop") != null ||
+                        zip.getEntry("assets/xposed_init") != null
+                    ) {
+                        return true
+                    }
+                }
+            } catch (_: Throwable) {
+            }
         }
 
         return false
