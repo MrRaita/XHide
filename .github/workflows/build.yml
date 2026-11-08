@@ -35,7 +35,8 @@ jobs:
           mkdir -p dist
           VERSION_TAG="${GITHUB_REF_NAME}"
           if [[ ! "$VERSION_TAG" =~ ^v[0-9] ]]; then
-            VERSION_TAG="v$(grep 'versionName = ' app/build.gradle.kts | head -n 1 | cut -d '\"' -f 2)"
+            RAW_VER=$(awk -F '"' '/versionName/ {print $2}' app/build.gradle.kts)
+            VERSION_TAG="v${RAW_VER}"
           fi
           echo "Packaging version: $VERSION_TAG"
           cp app/build/outputs/apk/release/app-release.apk "dist/XHide-${VERSION_TAG}-release.apk"
