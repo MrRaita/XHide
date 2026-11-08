@@ -1436,7 +1436,7 @@ private fun SettingsTabScreen(
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
             CompactInfoRow(
                 title = strings.versionTitle,
-                value = "v1.1.0 (Android 11–17 Multi-User)"
+                value = "v1.0.0 (Android 11–17 Multi-User)"
             )
         }
 
