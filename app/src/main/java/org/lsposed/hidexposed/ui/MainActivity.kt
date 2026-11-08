@@ -118,10 +118,12 @@ import org.lsposed.hidexposed.core.AppDiagnostics
 import org.lsposed.hidexposed.core.ModuleCache
 import org.lsposed.hidexposed.data.ConfigStore
 import org.lsposed.hidexposed.ui.theme.HideXposedTheme
+import android.util.LruCache
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
-private val appIconCache = ConcurrentHashMap<String, ImageBitmap>()
+// Bounded LRU cache (max 256 entries) to prevent unlimited memory growth
+private val appIconLruCache = object : LruCache<String, ImageBitmap>(256) {}
 private val xposedAppCache = ConcurrentHashMap<String, Boolean>()
 
 data class AppEntry(
@@ -1844,8 +1846,7 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
                 pkg
             }
 
-            if (appIconCache.size > 1024) appIconCache.clear()
-            val iconBitmap = appIconCache[key] ?: run {
+            val iconBitmap = synchronized(appIconLruCache) { appIconLruCache.get(key) } ?: run {
                 val rawDrawable = try {
                     info.getBadgedIcon(0)
                 } catch (_: Throwable) {
@@ -1861,7 +1862,9 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
                 }
                 val bmp = drawableToImageBitmap(rawDrawable, 96)
                 if (bmp != null) {
-                    appIconCache[key] = bmp
+                    synchronized(appIconLruCache) {
+                        appIconLruCache.put(key, bmp)
+                    }
                 }
                 bmp
             }
