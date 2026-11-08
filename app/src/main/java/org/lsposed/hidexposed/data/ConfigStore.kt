@@ -77,10 +77,16 @@ object ConfigStore {
     fun shouldHidePackage(packageName: String, userId: Int, isDetectedXposedModule: Boolean): Boolean {
         ensureSystemLoaded()
         val uKey = userKey(userId, packageName)
-        if (blacklistedPackages.contains(uKey) || blacklistedPackages.contains(packageName)) {
+        if (blacklistedPackages.contains(uKey)) {
             return true
         }
-        if (whitelistedPackages.contains(uKey) || whitelistedPackages.contains(packageName)) {
+        if (whitelistedPackages.contains(uKey)) {
+            return false
+        }
+        if (blacklistedPackages.contains(packageName)) {
+            return true
+        }
+        if (whitelistedPackages.contains(packageName)) {
             return false
         }
         if (!isDetectedXposedModule) {
@@ -258,17 +264,52 @@ object ConfigStore {
             .apply()
 
         return try {
+            val wlPlain = whitelist.map { it.substringAfter(':', it) }.toSet()
+            val blPlain = blacklist.map { it.substringAfter(':', it) }.toSet()
+
+            val ipcWhitelist = LinkedHashSet<String>(whitelist)
+            for (pkg in wlPlain) {
+                if (!blPlain.contains(pkg)) {
+                    ipcWhitelist.add(pkg)
+                }
+            }
+
+            val ipcBlacklist = LinkedHashSet<String>(blacklist)
+            for (pkg in blPlain) {
+                if (!wlPlain.contains(pkg)) {
+                    ipcBlacklist.add(pkg)
+                }
+            }
+
+            val cleanChanged = changedPackages.map { it.substringAfter(':', it) }.distinct()
+
             val payload = JSONObject().apply {
                 put("autoHide", autoHide)
                 put("autoHideClone", autoHideClone)
-                put("whitelist", JSONArray(whitelist.toList()))
-                put("blacklist", JSONArray(blacklist.toList()))
-                put("changed", JSONArray(changedPackages))
+                put("whitelist", JSONArray(ipcWhitelist.toList()))
+                put("blacklist", JSONArray(ipcBlacklist.toList()))
+                put("changed", JSONArray(cleanChanged))
             }.toString()
 
             val launcherApps = context.getSystemService(LauncherApps::class.java) ?: return false
-            val res = launcherApps.getActivityList("$IPC_UPDATE_PREFIX$payload", Process.myUserHandle())
-            res != null && res.isNotEmpty()
+            val profiles = LinkedHashSet<android.os.UserHandle>()
+            profiles.add(Process.myUserHandle())
+            try {
+                launcherApps.profiles?.let { profiles.addAll(it) }
+            } catch (_: Throwable) {
+            }
+
+            var anyOk = false
+            for (profile in profiles) {
+                try {
+                    val res = launcherApps.getActivityList("$IPC_UPDATE_PREFIX$payload", profile)
+                    if (res != null && res.isNotEmpty()) {
+                        anyOk = true
+                    }
+                } catch (_: Throwable) {
+                }
+            }
+            anyOk
         } catch (_: Throwable) {
             false
         }

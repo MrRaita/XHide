@@ -476,8 +476,11 @@ fun MainScreen(
                         apps = apps,
                         availableUserIds = availableUserIds,
                         autoHideModules = autoHideModules,
+                        autoHideCloneModules = autoHideCloneModules,
+                        whitelist = whitelist,
+                        blacklist = blacklist,
                         defaultLauncher = defaultLauncher,
-                        isEntryHidden = { isEntryHidden(it) },
+                        isEntryHidden = { isEntryHidden(it, whitelist, blacklist, autoHideModules, autoHideCloneModules) },
                         onOpenAppsFilter = { mode ->
                             filterMode = mode
                             currentTab = MainTab.APPS
@@ -498,11 +501,15 @@ fun MainScreen(
                         apps = apps,
                         availableUserIds = availableUserIds,
                         showSystemApps = showSystemApps,
+                        autoHideModules = autoHideModules,
+                        autoHideCloneModules = autoHideCloneModules,
+                        whitelist = whitelist,
+                        blacklist = blacklist,
                         searchQuery = searchQuery,
                         onSearchChange = { searchQuery = it },
                         filterMode = filterMode,
                         onFilterModeChange = { filterMode = it },
-                        isEntryHidden = { isEntryHidden(it) },
+                        isEntryHidden = { isEntryHidden(it, whitelist, blacklist, autoHideModules, autoHideCloneModules) },
                         onToggleAppHidden = { entry, hide ->
                             updateAppHidden(entry, hide)
                         }
@@ -587,6 +594,9 @@ private fun HomeTabScreen(
     apps: List<AppEntry>,
     availableUserIds: List<Int>,
     autoHideModules: Boolean,
+    autoHideCloneModules: Boolean,
+    whitelist: Set<String>,
+    blacklist: Set<String>,
     defaultLauncher: LauncherInfo?,
     isEntryHidden: (AppEntry) -> Boolean,
     onOpenAppsFilter: (FilterMode) -> Unit,
@@ -594,7 +604,7 @@ private fun HomeTabScreen(
     onRefreshLauncher: () -> Unit,
     onToggleAppHidden: (AppEntry, Boolean) -> Unit
 ) {
-    val hiddenApps = remember(apps, autoHideModules, isEntryHidden) {
+    val hiddenApps = remember(apps, autoHideModules, autoHideCloneModules, whitelist, blacklist) {
         apps.filter { isEntryHidden(it) }
     }
     val xposedCount = remember(apps) { apps.count { it.isXposedModule } }
@@ -903,6 +913,10 @@ private fun AppsTabScreen(
     apps: List<AppEntry>,
     availableUserIds: List<Int>,
     showSystemApps: Boolean,
+    autoHideModules: Boolean,
+    autoHideCloneModules: Boolean,
+    whitelist: Set<String>,
+    blacklist: Set<String>,
     searchQuery: String,
     onSearchChange: (String) -> Unit,
     filterMode: FilterMode,
@@ -910,7 +924,16 @@ private fun AppsTabScreen(
     isEntryHidden: (AppEntry) -> Boolean,
     onToggleAppHidden: (AppEntry, Boolean) -> Unit
 ) {
-    val filteredApps = remember(apps, searchQuery, filterMode, showSystemApps, isEntryHidden) {
+    val filteredApps = remember(
+        apps,
+        searchQuery,
+        filterMode,
+        showSystemApps,
+        autoHideModules,
+        autoHideCloneModules,
+        whitelist,
+        blacklist
+    ) {
         apps.filter { app ->
             val allowSystem = showSystemApps || !app.isSystemApp || app.isXposedModule || app.userId != 0
             val matchesMode = when (val mode = filterMode) {
@@ -930,7 +953,9 @@ private fun AppsTabScreen(
         apps.count { showSystemApps || !it.isSystemApp || it.isXposedModule || it.userId != 0 }
     }
     val xposedCount = remember(apps) { apps.count { it.isXposedModule } }
-    val hiddenCount = remember(apps, isEntryHidden) { apps.count { isEntryHidden(it) } }
+    val hiddenCount = remember(apps, autoHideModules, autoHideCloneModules, whitelist, blacklist) {
+        apps.count { isEntryHidden(it) }
+    }
 
     Column(
         modifier = Modifier
