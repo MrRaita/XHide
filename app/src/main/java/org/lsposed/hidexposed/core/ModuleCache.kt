@@ -23,7 +23,7 @@ import java.util.zip.ZipFile
  * without requiring broadcast receivers or locking PackageManager.
  */
 object ModuleCache {
-    private const val TAG = "HideXposedIcons"
+    private const val TAG = "XHide"
 
     // Key: "packageName|sourceDir" -> Value: true if Xposed module, false otherwise
     private val apkModuleCache = ConcurrentHashMap<String, Boolean>()

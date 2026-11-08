@@ -1,16 +1,16 @@
-# HideXposedIcons
+# XHide
 
 A lightweight, zero-deadlock, system-level Xposed/LSPosed/Vector module that cleanly hides Xposed module icons from all Android launchers (home screen, app drawer, and launcher search) while keeping them 100% accessible inside Xposed/LSPosed/Vector managers.
 
-## Why HideXposedIcons?
+## Why XHide?
 
 Traditional icon-hiding modules hook `PackageManagerService.queryIntentActivities` or disable package components (`pm disable`), which causes severe issues on modern Android (Android 12–15 / One UI 6+ / HyperOS):
 - **PMS Lock Contention & Watchdog Reboots:** Calling `PackageManager` inside a `PackageManagerService` hook triggers recursive lock deadlocks, causing Android Watchdog to kill `system_server`.
 - **Broken Boot Services:** Indiscriminate `queryIntentActivities` filtering breaks `android.ext.services` and `AppSearchManager` during boot.
 - **Broken Manager Launch:** Disabling a module's main activity prevents LSPosed/Vector Manager from opening its settings screen.
 
-### How HideXposedIcons Solves This
-Instead of touching `PackageManagerService`, **HideXposedIcons** hooks the AOSP CTS-standardized launcher IPC boundary in `system_server`:
+### How XHide Solves This
+Instead of touching `PackageManagerService`, **XHide** hooks the AOSP CTS-standardized launcher IPC boundary in `system_server`:
 ```java
 com.android.server.pm.LauncherAppsService$LauncherAppsImpl#getLauncherActivities(
     String callingPackage,

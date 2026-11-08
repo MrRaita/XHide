@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">HideXposedIcons</string>
-    <string name="xposed_description">System-level launcher icon filter for Xposed/LSPosed/Vector modules via LauncherAppsService.</string>
+    <string name="app_name">XHide</string>
+    <string name="xposed_description">System-level multi-user launcher icon hider via LauncherAppsService.</string>
 </resources>

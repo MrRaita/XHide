@@ -25,7 +25,7 @@ import java.util.ArrayList
  *    per-user blacklisted apps from all launchers while keeping them visible to Xposed managers.
  */
 object LauncherHook {
-    private const val TAG = "HideXposedIcons"
+    private const val TAG = "XHide"
     private const val TARGET_CLASS = "com.android.server.pm.LauncherAppsService\$LauncherAppsImpl"
     private const val EXTRA_ALL_USERS_QUERY = "hidexposed_all_users_query"
 
@@ -48,7 +48,7 @@ object LauncherHook {
     }
 
     /**
-     * Hooks `ILauncherApps#getUserProfiles()` so that when `HideXposedIcons` calls
+     * Hooks `ILauncherApps#getUserProfiles()` so that when `XHide` calls
      * `launcherApps.getProfiles()`, it receives every active UserHandle on the device.
      */
     private fun hookGetUserProfiles(clazz: Class<*>) {
@@ -80,7 +80,7 @@ object LauncherHook {
     }
 
     /**
-     * Hooks `LauncherAppsImpl#canAccessProfile(int, String)` so that `HideXposedIcons` can query
+     * Hooks `LauncherAppsImpl#canAccessProfile(int, String)` so that `XHide` can query
      * `getActivityList(null, userHandle)` and load badged icons for any user ID (User 10, Work,
      * Private Space, Dual Apps, etc.) without failing cross-profile checks.
      */

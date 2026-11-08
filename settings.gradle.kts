@@ -20,5 +20,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "HideXposedIcons"
+rootProject.name = "XHide"
 include(":app")
