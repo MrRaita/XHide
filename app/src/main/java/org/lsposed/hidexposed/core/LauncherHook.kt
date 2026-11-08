@@ -330,11 +330,14 @@ object LauncherHook {
                             val combined = ArrayList<Any>(baseList.filterNotNull())
                             val profiles = collectAllUserHandles(param.thisObject, userHandle)
 
+                            val expectedClass = baseList.firstOrNull()?.javaClass
                             for (profile in profiles) {
                                 if (getUserId(profile) == userId) continue
                                 val extraItems = queryLauncherActivitiesForProfile(param.thisObject, profile)
                                 for (item in extraItems) {
-                                    if (item != null) combined.add(item)
+                                    if (item != null && (expectedClass == null || expectedClass.isInstance(item))) {
+                                        combined.add(item)
+                                    }
                                 }
                             }
 
