@@ -73,8 +73,8 @@ data class AppStrings(
 object Localization {
     val languageOptions = listOf(
         "SYSTEM" to "System",
-        "TR" to "Türkçe",
         "EN" to "English",
+        "TR" to "Türkçe",
         "DE" to "Deutsch",
         "RU" to "Русский",
         "ZH" to "简体中文"
@@ -83,7 +83,7 @@ object Localization {
     fun resolveStrings(langCode: String): AppStrings {
         val effective = if (langCode == "SYSTEM") {
             val sys = Locale.getDefault().language.uppercase(Locale.ROOT)
-            if (sys in listOf("TR", "EN", "DE", "RU", "ZH")) sys else "TR"
+            if (sys in listOf("TR", "EN", "DE", "RU", "ZH")) sys else "EN"
         } else {
             langCode
         }
