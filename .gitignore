@@ -12,3 +12,4 @@ app/build
 .kotlin
 dist/
 *.apk
+AGENT.md
