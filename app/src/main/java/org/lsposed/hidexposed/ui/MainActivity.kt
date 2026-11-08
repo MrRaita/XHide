@@ -2,6 +2,7 @@ package org.lsposed.hidexposed.ui
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.ApplicationInfo
 import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
@@ -23,12 +24,11 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -43,6 +43,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -90,6 +91,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -134,6 +136,7 @@ sealed interface FilterMode {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         enableEdgeToEdge()
         ConfigStore.loadUiPrefs(this)
         setContent {
@@ -577,7 +580,6 @@ fun MainScreen(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun HomeTabScreen(
     strings: AppStrings,
@@ -751,7 +753,7 @@ private fun HomeTabScreen(
             }
         }
 
-        // 4. Currently Hidden Icons (Vertical Wrapping List — No Horizontal Scroll!)
+        // 4. Currently Hidden Icons Quick Preview Strip
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
@@ -794,42 +796,55 @@ private fun HomeTabScreen(
                         text = strings.noHiddenAppsYet,
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 6.dp)
+                        modifier = Modifier.padding(vertical = 8.dp)
                     )
                 } else {
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        contentPadding = PaddingValues(vertical = 2.dp)
                     ) {
-                        for (app in hiddenApps) {
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                        items(hiddenApps, key = { it.uniqueKey }) { app ->
+                            Column(
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
+                                    .width(62.dp)
+                                    .clip(RoundedCornerShape(10.dp))
                                     .clickable { onToggleAppHidden(app, false) }
+                                    .padding(vertical = 4.dp, horizontal = 2.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
+                                Box {
                                     if (app.icon != null) {
                                         Image(
                                             bitmap = app.icon,
                                             contentDescription = app.label,
                                             modifier = Modifier
-                                                .size(20.dp)
-                                                .clip(RoundedCornerShape(5.dp))
+                                                .size(38.dp)
+                                                .clip(RoundedCornerShape(9.dp))
                                         )
-                                        Spacer(modifier = Modifier.width(6.dp))
                                     }
-                                    Text(
-                                        text = if (app.userId == 0) app.label else "${app.label} (U${app.userId})",
-                                        fontSize = 11.5.sp,
-                                        maxLines = 1
-                                    )
+                                    if (app.userId != 0) {
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.tertiary,
+                                            shape = RoundedCornerShape(4.dp),
+                                            modifier = Modifier.align(Alignment.BottomEnd)
+                                        ) {
+                                            Text(
+                                                text = "U${app.userId}",
+                                                fontSize = 8.sp,
+                                                color = MaterialTheme.colorScheme.onTertiary,
+                                                modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp)
+                                            )
+                                        }
+                                    }
                                 }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = app.label,
+                                    fontSize = 10.5.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    textAlign = TextAlign.Center
+                                )
                             }
                         }
                     }
@@ -882,7 +897,6 @@ private fun DashboardStatCard(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AppsTabScreen(
     strings: AppStrings,
@@ -976,11 +990,12 @@ private fun AppsTabScreen(
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // Wrapping Filter Chips (Vertical wrap, no horizontal scrolling; order: Tümü -> Xposed -> Gizli -> User 0 -> User 10...)
-        FlowRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+        // Filter Chips Row (order: Tümü -> Xposed -> Gizli -> User 0 -> User 10...)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             CompactFilterChip(
                 selected = filterMode is FilterMode.AllApps,
@@ -1150,7 +1165,6 @@ private fun MiniBadge(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SettingsTabScreen(
     strings: AppStrings,
@@ -1216,7 +1230,7 @@ private fun SettingsTabScreen(
             )
         }
 
-        // Section 2: Appearance & Language (Vertical FlowRow, no horizontal scrolling!)
+        // Section 2: Appearance & Language
         SettingsSectionCard(title = strings.sectionAppearance) {
             Text(
                 text = strings.languageTitle,
@@ -1224,10 +1238,11 @@ private fun SettingsTabScreen(
                 fontWeight = FontWeight.Medium
             )
             Spacer(modifier = Modifier.height(6.dp))
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 for ((code, displayName) in Localization.languageOptions) {
                     CompactFilterChip(
@@ -1248,10 +1263,9 @@ private fun SettingsTabScreen(
                 fontWeight = FontWeight.Medium
             )
             Spacer(modifier = Modifier.height(6.dp))
-            FlowRow(
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 val themes = listOf(
                     "SYSTEM" to strings.themeSystem,
