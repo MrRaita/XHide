@@ -534,9 +534,6 @@ object LauncherHook {
         if (callingPackage == ConfigStore.SELF_PACKAGE) {
             return isCallerSelf(callingUid, serviceObject)
         }
-        if (ModuleCache.KNOWN_MANAGERS.contains(callingPackage)) {
-            return isCallingUidPackage(callingUid, callingPackage, serviceObject)
-        }
         return false
     }
 
@@ -556,22 +553,6 @@ object LauncherHook {
                 cachedSelfAppId = appId
             }
             isSelf
-        } catch (_: Throwable) {
-            false
-        } finally {
-            Binder.restoreCallingIdentity(token)
-        }
-    }
-
-    private fun isCallingUidPackage(callingUid: Int, expectedPackage: String, serviceObject: Any?): Boolean {
-        if (callingUid == Process.SYSTEM_UID || callingUid == 0) return true
-        val appId = callingUid % PER_USER_RANGE
-        if (appId < Process.FIRST_APPLICATION_UID) return false
-        val context = getContextFromImpl(serviceObject) ?: return false
-        val token = Binder.clearCallingIdentity()
-        return try {
-            val pkgs = context.packageManager.getPackagesForUid(callingUid)
-            pkgs?.contains(expectedPackage) == true
         } catch (_: Throwable) {
             false
         } finally {
