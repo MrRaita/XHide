@@ -33,26 +33,23 @@ jobs:
       - name: Prepare Named APKs
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/release/app-release.apk dist/XHide-v1.0.0-release.apk
-          cp app/build/outputs/apk/debug/app-debug.apk dist/XHide-v1.0.0-debug.apk
+          VERSION_TAG="${GITHUB_REF_NAME}"
+          if [[ ! "$VERSION_TAG" =~ ^v[0-9] ]]; then
+            VERSION_TAG="v$(grep 'versionName = ' app/build.gradle.kts | head -n 1 | cut -d '\"' -f 2)"
+          fi
+          echo "Packaging version: $VERSION_TAG"
+          cp app/build/outputs/apk/release/app-release.apk "dist/XHide-${VERSION_TAG}-release.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/XHide-${VERSION_TAG}-debug.apk"
 
-      - name: Upload XHide Release APK Artifact
+      - name: Upload XHide APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: XHide-v1.0.0-release
-          path: dist/XHide-v1.0.0-release.apk
-
-      - name: Upload XHide Debug APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: XHide-v1.0.0-debug
-          path: dist/XHide-v1.0.0-debug.apk
+          name: XHide-apks
+          path: dist/*.apk
 
       - name: Publish GitHub Release on Tag
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist/XHide-v1.0.0-release.apk
-            dist/XHide-v1.0.0-debug.apk
+          files: dist/*.apk
           generate_release_notes: true
