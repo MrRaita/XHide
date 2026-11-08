@@ -1,11 +1,15 @@
-name: Android CI
+name: Android CI & Release
 
 on:
   push:
     branches: [ "main", "master" ]
+    tags: [ "v*" ]
   pull_request:
     branches: [ "main", "master" ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -23,17 +27,32 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
-      - name: Build Release & Debug APKs
-        run: ./gradlew assembleRelease assembleDebug
+      - name: Run Unit Tests & Build Release/Debug APKs
+        run: ./gradlew test assembleRelease assembleDebug
 
-      - name: Upload Release APK Artifact
+      - name: Prepare Named APKs
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk dist/XHide-v1.1.0-release.apk
+          cp app/build/outputs/apk/debug/app-debug.apk dist/XHide-v1.1.0-debug.apk
+
+      - name: Upload XHide Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HideXposedIcons-release
-          path: app/build/outputs/apk/release/*.apk
+          name: XHide-v1.1.0-release
+          path: dist/XHide-v1.1.0-release.apk
 
-      - name: Upload Debug APK Artifact
+      - name: Upload XHide Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HideXposedIcons-debug
-          path: app/build/outputs/apk/debug/*.apk
+          name: XHide-v1.1.0-debug
+          path: dist/XHide-v1.1.0-debug.apk
+
+      - name: Publish GitHub Release on Tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/XHide-v1.1.0-release.apk
+            dist/XHide-v1.1.0-debug.apk
+          generate_release_notes: true
