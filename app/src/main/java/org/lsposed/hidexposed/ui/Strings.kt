@@ -67,7 +67,18 @@ data class AppStrings(
     val sectionAbout: String,
     val protectedManagersTitle: String,
     val hookTargetTitle: String,
-    val versionTitle: String
+    val versionTitle: String,
+    val githubSectionTitle: String,
+    val githubRepoTitle: String,
+    val githubRepoDesc: String,
+    val reportIssueTitle: String,
+    val reportIssueDesc: String,
+    val hookInactiveHelpTitle: String,
+    val hookInactiveHelpBtn: String,
+    val crashDetectedTitle: String,
+    val crashDetectedDesc: String,
+    val sendCrashReportBtn: String,
+    val dismissBtn: String
 )
 
 object Localization {
@@ -160,7 +171,18 @@ object Localization {
         sectionAbout = "Hakkında & Sistem",
         protectedManagersTitle = "Korunan Yöneticiler (Bypass)",
         hookTargetTitle = "Hook Hedefi",
-        versionTitle = "Sürüm"
+        versionTitle = "Sürüm",
+        githubSectionTitle = "Topluluk & Destek",
+        githubRepoTitle = "GitHub Deposu",
+        githubRepoDesc = "everyoneexe/XHide · Kaynak kodlar ve güncellemeler",
+        reportIssueTitle = "Hata Bildir / Teşhis Günlüğü",
+        reportIssueDesc = "Telefon meta bilgileri ve sistem loglarıyla GitHub Issue oluşturun",
+        hookInactiveHelpTitle = "Sistem hook algılanamadı mı?",
+        hookInactiveHelpBtn = "Teşhis Raporu İle Hata Bildir",
+        crashDetectedTitle = "Beklenmedik Hata / Çökme Raporu",
+        crashDetectedDesc = "Uygulama son oturumda beklenmedik bir hatayla karşılaştı. Hatanın çözülmesi için telefon bilgileriyle GitHub'a iletmek ister misiniz?",
+        sendCrashReportBtn = "GitHub'a Rapor İlet",
+        dismissBtn = "Kapat"
     )
 
     private val EnStrings = AppStrings(
@@ -227,7 +249,18 @@ object Localization {
         sectionAbout = "About & System",
         protectedManagersTitle = "Protected Managers (Bypass)",
         hookTargetTitle = "Hook Target",
-        versionTitle = "Version"
+        versionTitle = "Version",
+        githubSectionTitle = "Community & Support",
+        githubRepoTitle = "GitHub Repository",
+        githubRepoDesc = "everyoneexe/XHide · Source code, issues & releases",
+        reportIssueTitle = "Report Issue / Diagnostics",
+        reportIssueDesc = "Open a GitHub Issue pre-filled with device specs and logs",
+        hookInactiveHelpTitle = "System hook not detected?",
+        hookInactiveHelpBtn = "Report Issue with Diagnostics",
+        crashDetectedTitle = "Crash / Diagnostic Report",
+        crashDetectedDesc = "An unexpected error occurred in the previous session. Would you like to report it to GitHub with device specs to help fix it?",
+        sendCrashReportBtn = "Submit to GitHub",
+        dismissBtn = "Dismiss"
     )
 
     private val DeStrings = AppStrings(
@@ -294,7 +327,18 @@ object Localization {
         sectionAbout = "Über & System",
         protectedManagersTitle = "Geschützte Manager (Bypass)",
         hookTargetTitle = "Hook-Ziel",
-        versionTitle = "Version"
+        versionTitle = "Version",
+        githubSectionTitle = "Community & Support",
+        githubRepoTitle = "GitHub-Repository",
+        githubRepoDesc = "everyoneexe/XHide · Quellcode, Probleme & Releases",
+        reportIssueTitle = "Fehler melden / Diagnose",
+        reportIssueDesc = "GitHub-Issue mit Gerätedaten und Protokollen öffnen",
+        hookInactiveHelpTitle = "System-Hook nicht erkannt?",
+        hookInactiveHelpBtn = "Problem mit Diagnose melden",
+        crashDetectedTitle = "Absturz- / Diagnosebericht",
+        crashDetectedDesc = "In der letzten Sitzung ist ein unerwarteter Fehler aufgetreten. Möchtest du ihn an GitHub melden?",
+        sendCrashReportBtn = "An GitHub senden",
+        dismissBtn = "Schließen"
     )
 
     private val RuStrings = AppStrings(
@@ -361,7 +405,18 @@ object Localization {
         sectionAbout = "О модуле и системе",
         protectedManagersTitle = "Защищённые менеджеры (Bypass)",
         hookTargetTitle = "Цель хука",
-        versionTitle = "Версия"
+        versionTitle = "Версия",
+        githubSectionTitle = "Сообщество и поддержка",
+        githubRepoTitle = "Репозиторий GitHub",
+        githubRepoDesc = "everyoneexe/XHide · Исходный код, релизы и тикеты",
+        reportIssueTitle = "Сообщить об ошибке / Диагностика",
+        reportIssueDesc = "Создать GitHub Issue с метаданными устройства и логами",
+        hookInactiveHelpTitle = "Системный хук не обнаружен?",
+        hookInactiveHelpBtn = "Сообщить с логами диагностики",
+        crashDetectedTitle = "Отчёт об ошибке / сбое",
+        crashDetectedDesc = "В предыдущем сеансе произошла непредвиденная ошибка. Хотите отправить отчёт на GitHub с параметрами устройства?",
+        sendCrashReportBtn = "Отправить на GitHub",
+        dismissBtn = "Закрыть"
     )
 
     private val ZhStrings = AppStrings(
@@ -428,6 +483,17 @@ object Localization {
         sectionAbout = "关于与系统",
         protectedManagersTitle = "受保护管理器 (白名单)",
         hookTargetTitle = "Hook 目标",
-        versionTitle = "版本"
+        versionTitle = "版本",
+        githubSectionTitle = "社区与支持",
+        githubRepoTitle = "GitHub 仓库",
+        githubRepoDesc = "everyoneexe/XHide · 源代码、问题反馈与版本更新",
+        reportIssueTitle = "反馈问题 / 诊断日志",
+        reportIssueDesc = "附带设备元信息与系统日志前往 GitHub 提交 Issue",
+        hookInactiveHelpTitle = "未检测到系统 Hook？",
+        hookInactiveHelpBtn = "附带诊断报告提交 Issue",
+        crashDetectedTitle = "意外崩溃 / 诊断报告",
+        crashDetectedDesc = "应用在上次会话中遇到意外错误。是否要将附带设备信息的报告提交到 GitHub 以便修复？",
+        sendCrashReportBtn = "提交至 GitHub",
+        dismissBtn = "关闭"
     )
 }

@@ -50,6 +50,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -99,6 +100,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import org.lsposed.hidexposed.core.AppDiagnostics
 import org.lsposed.hidexposed.core.ModuleCache
 import org.lsposed.hidexposed.data.ConfigStore
 import org.lsposed.hidexposed.ui.theme.HideXposedTheme
@@ -201,6 +203,10 @@ fun MainScreen(
     var searchQuery by remember { mutableStateOf("") }
     // Default filter mode is AllApps ("Tümü") as requested
     var filterMode by remember { mutableStateOf<FilterMode>(FilterMode.AllApps) }
+    var pendingCrashReport by remember {
+        val f = File(context.filesDir, "last_crash.txt")
+        mutableStateOf(if (f.exists()) f.readText() else null)
+    }
 
     fun isEntryHidden(
         entry: AppEntry,
@@ -387,6 +393,44 @@ fun MainScreen(
         }
     }
 
+    if (pendingCrashReport != null) {
+        AlertDialog(
+            onDismissRequest = {
+                File(context.filesDir, "last_crash.txt").delete()
+                pendingCrashReport = null
+            },
+            title = { Text(strings.crashDetectedTitle, fontWeight = FontWeight.Bold) },
+            text = { Text(strings.crashDetectedDesc) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val report = pendingCrashReport
+                        File(context.filesDir, "last_crash.txt").delete()
+                        pendingCrashReport = null
+                        AppDiagnostics.openGitHubIssue(
+                            context = context,
+                            isHookActive = isHookActive,
+                            activeUserIds = availableUserIds,
+                            userNotes = report
+                        )
+                    }
+                ) {
+                    Text(strings.sendCrashReportBtn, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        File(context.filesDir, "last_crash.txt").delete()
+                        pendingCrashReport = null
+                    }
+                ) {
+                    Text(strings.dismissBtn)
+                }
+            }
+        )
+    }
+
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues()
 
     Scaffold(
@@ -516,6 +560,9 @@ fun MainScreen(
                     )
 
                     MainTab.SETTINGS -> SettingsTabScreen(
+                        context = context,
+                        isHookActive = isHookActive,
+                        availableUserIds = availableUserIds,
                         strings = strings,
                         langCode = langCode,
                         themeMode = themeMode,
@@ -608,6 +655,7 @@ private fun HomeTabScreen(
         apps.filter { isEntryHidden(it) }
     }
     val xposedCount = remember(apps) { apps.count { it.isXposedModule } }
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier
@@ -662,6 +710,22 @@ private fun HomeTabScreen(
                     fontSize = 11.5.sp,
                     lineHeight = 15.sp
                 )
+                if (!isHookActive) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    FilledTonalButton(
+                        onClick = {
+                            AppDiagnostics.openGitHubIssue(
+                                context = context,
+                                isHookActive = false,
+                                activeUserIds = availableUserIds
+                            )
+                        },
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        modifier = Modifier.height(30.dp)
+                    ) {
+                        Text(strings.hookInactiveHelpBtn, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
             }
         }
 
@@ -1192,6 +1256,9 @@ private fun MiniBadge(
 
 @Composable
 private fun SettingsTabScreen(
+    context: Context,
+    isHookActive: Boolean,
+    availableUserIds: List<Int>,
     strings: AppStrings,
     langCode: String,
     themeMode: String,
@@ -1368,6 +1435,53 @@ private fun SettingsTabScreen(
             CompactInfoRow(
                 title = strings.versionTitle,
                 value = "v1.1.0 (Android 11–17 Multi-User)"
+            )
+        }
+
+        // Section 5: GitHub & Community
+        SettingsSectionCard(title = strings.githubSectionTitle) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { AppDiagnostics.openGitHubRepo(context) }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                GitHubVectorIcon()
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = strings.githubRepoTitle,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = strings.githubRepoDesc,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                FilledTonalButton(
+                    onClick = { AppDiagnostics.openGitHubRepo(context) },
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                    modifier = Modifier.height(28.dp)
+                ) {
+                    Text("GitHub", fontSize = 11.sp)
+                }
+            }
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
+            CompactActionRow(
+                title = strings.reportIssueTitle,
+                subtitle = strings.reportIssueDesc,
+                onClick = {
+                    AppDiagnostics.openGitHubIssue(
+                        context = context,
+                        isHookActive = isHookActive,
+                        activeUserIds = availableUserIds
+                    )
+                }
             )
         }
 
@@ -1793,5 +1907,34 @@ private fun SearchVectorIcon() {
             strokeWidth = 1.8.dp.toPx(),
             cap = StrokeCap.Round
         )
+    }
+}
+
+@Composable
+private fun GitHubVectorIcon() {
+    val color = LocalContentColor.current
+    Canvas(modifier = Modifier.size(20.dp)) {
+        val w = size.width
+        val h = size.height
+        // Outer head ring
+        drawCircle(
+            color = color,
+            radius = w * 0.44f,
+            center = Offset(w * 0.5f, h * 0.5f),
+            style = Stroke(width = 1.6.dp.toPx())
+        )
+        // Stylized cat silhouette / ears
+        val cat = Path().apply {
+            moveTo(w * 0.32f, h * 0.40f)
+            lineTo(w * 0.28f, h * 0.26f)
+            lineTo(w * 0.40f, h * 0.34f)
+            lineTo(w * 0.60f, h * 0.34f)
+            lineTo(w * 0.72f, h * 0.26f)
+            lineTo(w * 0.68f, h * 0.40f)
+            close()
+        }
+        drawPath(path = cat, color = color)
+        // Center node
+        drawCircle(color = color, radius = w * 0.13f, center = Offset(w * 0.5f, h * 0.62f))
     }
 }
