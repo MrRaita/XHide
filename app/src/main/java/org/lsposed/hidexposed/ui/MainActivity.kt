@@ -68,6 +68,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -111,7 +112,9 @@ import org.lsposed.hidexposed.core.ModuleCache
 import org.lsposed.hidexposed.data.ConfigStore
 import org.lsposed.hidexposed.ui.theme.HideXposedTheme
 import java.io.File
-import java.util.zip.ZipFile
+import java.util.concurrent.ConcurrentHashMap
+
+private val appIconCache = ConcurrentHashMap<String, ImageBitmap>()
 
 data class AppEntry(
     val userId: Int,
@@ -206,6 +209,7 @@ fun MainScreen(
     var availableUserIds by remember { mutableStateOf<List<Int>>(listOf(0)) }
     var defaultLauncher by remember { mutableStateOf<LauncherInfo?>(null) }
     var isLoading by remember { mutableStateOf(true) }
+    var isRefreshing by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     // Default filter mode is AllApps ("Tümü") as requested
     var filterMode by remember { mutableStateOf<FilterMode>(FilterMode.AllApps) }
@@ -263,6 +267,8 @@ fun MainScreen(
     fun refreshState(showToastOnDone: Boolean = false) {
         scope.launch {
             if (apps.isEmpty()) isLoading = true
+            else isRefreshing = true
+
             val active = withContext(Dispatchers.IO) {
                 ConfigStore.pingSystemHook(context)
             }
@@ -276,75 +282,33 @@ fun MainScreen(
             apps = loadedApps
             defaultLauncher = launcher
             availableUserIds = loadedApps.map { it.userId }.distinct().sorted()
-            if (active) {
-                withContext(Dispatchers.IO) {
-                    val affectedPkgs = loadedApps
-                        .filter { isEntryHidden(it) || it.isXposedModule }
-                        .map { it.packageName }
-                        .distinct()
-                    ConfigStore.saveUiPrefsAndSync(
-                        context = context,
-                        autoHide = autoHideModules,
-                        autoHideClone = autoHideCloneModules,
-                        whitelist = whitelist,
-                        blacklist = blacklist,
-                        changedPackages = affectedPkgs
-                    )
-                }
-            }
-            isLoading = false
+
             if (showToastOnDone) {
+                if (active) {
+                    withContext(Dispatchers.IO) {
+                        val affectedPkgs = loadedApps
+                            .filter { isEntryHidden(it) || it.isXposedModule }
+                            .map { it.packageName }
+                            .distinct()
+                        ConfigStore.saveUiPrefsAndSync(
+                            context = context,
+                            autoHide = autoHideModules,
+                            autoHideClone = autoHideCloneModules,
+                            whitelist = whitelist,
+                            blacklist = blacklist,
+                            changedPackages = affectedPkgs
+                        )
+                    }
+                }
                 Toast.makeText(context, strings.launcherRefreshedToast, Toast.LENGTH_SHORT).show()
             }
+            isLoading = false
+            isRefreshing = false
         }
     }
 
     LaunchedEffect(Unit) {
         refreshState()
-    }
-
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                refreshState(showToastOnDone = false)
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
-    }
-
-    DisposableEffect(Unit) {
-        val launcherApps = context.getSystemService(LauncherApps::class.java)
-        val callback = object : LauncherApps.Callback() {
-            override fun onPackageAdded(packageName: String, user: UserHandle) {
-                refreshState(showToastOnDone = false)
-            }
-            override fun onPackageRemoved(packageName: String, user: UserHandle) {
-                refreshState(showToastOnDone = false)
-            }
-            override fun onPackageChanged(packageName: String, user: UserHandle) {
-                refreshState(showToastOnDone = false)
-            }
-            override fun onPackagesAvailable(packageNames: Array<out String>, user: UserHandle, replacing: Boolean) {
-                refreshState(showToastOnDone = false)
-            }
-            override fun onPackagesUnavailable(packageNames: Array<out String>, user: UserHandle, replacing: Boolean) {
-                refreshState(showToastOnDone = false)
-            }
-        }
-        try {
-            launcherApps?.registerCallback(callback)
-        } catch (_: Throwable) {
-        }
-        onDispose {
-            try {
-                launcherApps?.unregisterCallback(callback)
-            } catch (_: Throwable) {
-            }
-        }
     }
 
     fun updateAppHidden(entry: AppEntry, hideInLauncher: Boolean) {
@@ -579,7 +543,12 @@ fun MainScreen(
                     CircularProgressIndicator(modifier = Modifier.size(32.dp), strokeWidth = 3.dp)
                 }
             } else {
-                when (currentTab) {
+                PullToRefreshBox(
+                    isRefreshing = isRefreshing,
+                    onRefresh = { refreshState(showToastOnDone = false) },
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    when (currentTab) {
                     MainTab.HOME -> HomeTabScreen(
                         strings = strings,
                         isHookActive = isHookActive,
@@ -694,6 +663,7 @@ fun MainScreen(
                             Toast.makeText(context, strings.resetDoneToast, Toast.LENGTH_SHORT).show()
                         }
                     )
+                }
                 }
             }
         }
@@ -1768,20 +1738,26 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
                 pkg
             }
 
-            val rawDrawable = try {
-                info.getBadgedIcon(0)
-            } catch (_: Throwable) {
-                try {
-                    info.getIcon(0)
+            val iconBitmap = appIconCache[key] ?: run {
+                val rawDrawable = try {
+                    info.getBadgedIcon(0)
                 } catch (_: Throwable) {
                     try {
-                        appInfo.loadIcon(pm)
+                        info.getIcon(0)
                     } catch (_: Throwable) {
-                        null
+                        try {
+                            appInfo.loadIcon(pm)
+                        } catch (_: Throwable) {
+                            null
+                        }
                     }
                 }
+                val bmp = drawableToImageBitmap(rawDrawable, 96)
+                if (bmp != null) {
+                    appIconCache[key] = bmp
+                }
+                bmp
             }
-            val iconBitmap = drawableToImageBitmap(rawDrawable, 96)
 
             entriesMap[key] = AppEntry(
                 userId = userId,
@@ -1820,40 +1796,12 @@ private fun detectIsXposedApp(appInfo: ApplicationInfo, pm: PackageManager): Boo
     } catch (_: Throwable) {
         null
     }
-    if (meta != null && (
-            meta.containsKey("xposedmodule") ||
-                meta.containsKey("xposedminversion") ||
-                meta.containsKey("xposeddescription") ||
-                meta.containsKey("xposedscope")
-            )
-    ) {
-        return true
-    }
-
-    val apkPaths = LinkedHashSet<String>()
-    appInfo.sourceDir?.let { if (it.isNotEmpty()) apkPaths.add(it) }
-    appInfo.publicSourceDir?.let { if (it.isNotEmpty()) apkPaths.add(it) }
-    appInfo.splitSourceDirs?.forEach { if (!it.isNullOrEmpty()) apkPaths.add(it) }
-    appInfo.splitPublicSourceDirs?.forEach { if (!it.isNullOrEmpty()) apkPaths.add(it) }
-
-    for (src in apkPaths) {
-        try {
-            val file = File(src)
-            if (file.exists() && file.canRead()) {
-                ZipFile(file).use { zip ->
-                    if (zip.getEntry("assets/xposed_init") != null ||
-                        zip.getEntry("META-INF/xposed/module.prop") != null ||
-                        zip.getEntry("META-INF/xposed/java_init.list") != null ||
-                        zip.getEntry("META-INF/xposed/scope.list") != null
-                    ) {
-                        return true
-                    }
-                }
-            }
-        } catch (_: Throwable) {
-        }
-    }
-    return false
+    return meta != null && (
+        meta.containsKey("xposedmodule") ||
+            meta.containsKey("xposedminversion") ||
+            meta.containsKey("xposeddescription") ||
+            meta.containsKey("xposedscope")
+    )
 }
 
 @Composable

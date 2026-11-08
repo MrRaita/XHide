@@ -7,9 +7,7 @@ import android.os.Binder
 import android.os.UserHandle
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
-import java.io.File
 import java.util.concurrent.ConcurrentHashMap
-import java.util.zip.ZipFile
 
 /**
  * Universal O(1) Xposed Module Detector.
@@ -119,9 +117,9 @@ object ModuleCache {
         context: Context?,
         userHandle: UserHandle?
     ): Boolean {
-        // Tier 1: Check AndroidManifest meta-data
+        // Fast manifest meta-data check - 100% of modern Xposed / LSPosed / Vector modules declare this
         try {
-            val meta = appInfo.metaData ?: resolveAppInfoSafely(packageName, context, userHandle)?.metaData
+            val meta = appInfo?.metaData ?: resolveAppInfoSafely(packageName, context, userHandle)?.metaData
             if (meta != null) {
                 if (meta.containsKey("xposedmodule") ||
                     meta.containsKey("xposedminversion") ||
@@ -132,32 +130,6 @@ object ModuleCache {
                 }
             }
         } catch (_: Throwable) {
-        }
-
-        // Tier 2 & 3: Inspect base and split APK zip entries for classic (assets/xposed_init)
-        // and modern LibXposed API 100 (META-INF/xposed/*)
-        val apkPaths = LinkedHashSet<String>()
-        appInfo.sourceDir?.let { if (it.isNotEmpty()) apkPaths.add(it) }
-        appInfo.publicSourceDir?.let { if (it.isNotEmpty()) apkPaths.add(it) }
-        appInfo.splitSourceDirs?.forEach { if (!it.isNullOrEmpty()) apkPaths.add(it) }
-        appInfo.splitPublicSourceDirs?.forEach { if (!it.isNullOrEmpty()) apkPaths.add(it) }
-
-        for (path in apkPaths) {
-            try {
-                val apkFile = File(path)
-                if (apkFile.exists() && apkFile.canRead()) {
-                    ZipFile(apkFile).use { zip ->
-                        if (zip.getEntry("assets/xposed_init") != null ||
-                            zip.getEntry("META-INF/xposed/module.prop") != null ||
-                            zip.getEntry("META-INF/xposed/java_init.list") != null ||
-                            zip.getEntry("META-INF/xposed/scope.list") != null
-                        ) {
-                            return true
-                        }
-                    }
-                }
-            } catch (_: Throwable) {
-            }
         }
 
         return false
