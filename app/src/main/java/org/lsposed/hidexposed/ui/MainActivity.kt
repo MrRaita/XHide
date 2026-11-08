@@ -57,6 +57,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -90,6 +91,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -1912,29 +1914,10 @@ private fun SearchVectorIcon() {
 
 @Composable
 private fun GitHubVectorIcon() {
-    val color = LocalContentColor.current
-    Canvas(modifier = Modifier.size(20.dp)) {
-        val w = size.width
-        val h = size.height
-        // Outer head ring
-        drawCircle(
-            color = color,
-            radius = w * 0.44f,
-            center = Offset(w * 0.5f, h * 0.5f),
-            style = Stroke(width = 1.6.dp.toPx())
-        )
-        // Stylized cat silhouette / ears
-        val cat = Path().apply {
-            moveTo(w * 0.32f, h * 0.40f)
-            lineTo(w * 0.28f, h * 0.26f)
-            lineTo(w * 0.40f, h * 0.34f)
-            lineTo(w * 0.60f, h * 0.34f)
-            lineTo(w * 0.72f, h * 0.26f)
-            lineTo(w * 0.68f, h * 0.40f)
-            close()
-        }
-        drawPath(path = cat, color = color)
-        // Center node
-        drawCircle(color = color, radius = w * 0.13f, center = Offset(w * 0.5f, h * 0.62f))
-    }
+    Icon(
+        painter = painterResource(id = org.lsposed.hidexposed.R.drawable.ic_github),
+        contentDescription = "GitHub",
+        modifier = Modifier.size(24.dp),
+        tint = MaterialTheme.colorScheme.onSurface
+    )
 }
