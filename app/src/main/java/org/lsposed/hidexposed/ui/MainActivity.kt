@@ -126,11 +126,70 @@ import java.util.concurrent.ConcurrentHashMap
 private val appIconLruCache = object : LruCache<String, ImageBitmap>(256) {}
 private val xposedAppCache = ConcurrentHashMap<String, Boolean>()
 
+@Composable
+private fun rememberAppIcon(packageName: String, userId: Int): ImageBitmap? {
+    val context = LocalContext.current
+    val key = ConfigStore.userKey(userId, packageName)
+    var bitmap by remember(key) {
+        mutableStateOf(synchronized(appIconLruCache) { appIconLruCache.get(key) })
+    }
+
+    LaunchedEffect(key) {
+        if (bitmap == null) {
+            val bmp = withContext(Dispatchers.IO) {
+                loadAppIcon(context, packageName, userId)
+            }
+            if (bmp != null) {
+                bitmap = bmp
+            }
+        }
+    }
+    return bitmap
+}
+
+private fun loadAppIcon(context: Context, packageName: String, userId: Int): ImageBitmap? {
+    val key = ConfigStore.userKey(userId, packageName)
+    synchronized(appIconLruCache) {
+        val cached = appIconLruCache.get(key)
+        if (cached != null) return cached
+    }
+    return try {
+        val launcherApps = context.getSystemService(LauncherApps::class.java)
+        val userHandle = if (userId == 0) {
+            Process.myUserHandle()
+        } else {
+            try {
+                UserHandle::class.java.getDeclaredConstructor(Int::class.javaPrimitiveType).apply {
+                    isAccessible = true
+                }.newInstance(userId)
+            } catch (_: Throwable) {
+                Process.myUserHandle()
+            }
+        }
+        val activities = launcherApps?.getActivityList(packageName, userHandle)
+        val rawDrawable = activities?.firstOrNull()?.getBadgedIcon(0)
+            ?: activities?.firstOrNull()?.getIcon(0)
+            ?: try {
+                context.packageManager.getApplicationInfo(packageName, 0).loadIcon(context.packageManager)
+            } catch (_: Throwable) {
+                null
+            }
+        val bmp = drawableToImageBitmap(rawDrawable, 96)
+        if (bmp != null) {
+            synchronized(appIconLruCache) {
+                appIconLruCache.put(key, bmp)
+            }
+        }
+        bmp
+    } catch (_: Throwable) {
+        null
+    }
+}
+
 data class AppEntry(
     val userId: Int,
     val packageName: String,
     val label: String,
-    val icon: ImageBitmap?,
     val isXposedModule: Boolean,
     val isSystemApp: Boolean
 ) {
@@ -949,14 +1008,30 @@ private fun HomeTabScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Box {
-                                    if (app.icon != null) {
+                                    val icon = rememberAppIcon(app.packageName, app.userId)
+                                    if (icon != null) {
                                         Image(
-                                            bitmap = app.icon,
+                                            bitmap = icon,
                                             contentDescription = app.label,
                                             modifier = Modifier
                                                 .size(38.dp)
                                                 .clip(RoundedCornerShape(9.dp))
                                         )
+                                    } else {
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.surfaceVariant,
+                                            shape = RoundedCornerShape(9.dp),
+                                            modifier = Modifier.size(38.dp)
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Text(
+                                                    text = app.label.take(1).uppercase(),
+                                                    fontSize = 15.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
                                     }
                                     if (app.userId != 0) {
                                         Surface(
@@ -1232,16 +1307,32 @@ private fun AppItemRow(
                 .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (entry.icon != null) {
+            val icon = rememberAppIcon(entry.packageName, entry.userId)
+            if (icon != null) {
                 Image(
-                    bitmap = entry.icon,
+                    bitmap = icon,
                     contentDescription = entry.label,
                     modifier = Modifier
                         .size(34.dp)
                         .clip(RoundedCornerShape(8.dp))
                 )
-                Spacer(modifier = Modifier.width(10.dp))
+            } else {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.size(34.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = entry.label.take(1).uppercase(),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
+            Spacer(modifier = Modifier.width(10.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1850,34 +1941,10 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
                 pkg
             }
 
-            val iconBitmap = synchronized(appIconLruCache) { appIconLruCache.get(key) } ?: run {
-                val rawDrawable = try {
-                    info.getBadgedIcon(0)
-                } catch (_: Throwable) {
-                    try {
-                        info.getIcon(0)
-                    } catch (_: Throwable) {
-                        try {
-                            appInfo.loadIcon(pm)
-                        } catch (_: Throwable) {
-                            null
-                        }
-                    }
-                }
-                val bmp = drawableToImageBitmap(rawDrawable, 96)
-                if (bmp != null) {
-                    synchronized(appIconLruCache) {
-                        appIconLruCache.put(key, bmp)
-                    }
-                }
-                bmp
-            }
-
             entriesMap[key] = AppEntry(
                 userId = userId,
                 packageName = pkg,
                 label = label,
-                icon = iconBitmap,
                 isXposedModule = isXposed,
                 isSystemApp = isSystem
             )
