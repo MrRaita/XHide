@@ -1,7 +1,9 @@
 package org.lsposed.hidexposed.ui
 
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ActivityInfo
 import android.content.pm.ApplicationInfo
 import android.content.pm.LauncherApps
@@ -391,6 +393,41 @@ fun MainScreen(
 
     LaunchedEffect(Unit) {
         refreshState()
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshState()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+
+        val packageFilter = IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_ADDED)
+            addAction(Intent.ACTION_PACKAGE_REMOVED)
+            addAction(Intent.ACTION_PACKAGE_REPLACED)
+            addDataScheme("package")
+        }
+        val packageReceiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context?, intent: Intent?) {
+                refreshState()
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(packageReceiver, packageFilter, Context.RECEIVER_EXPORTED)
+        } else {
+            context.registerReceiver(packageReceiver, packageFilter)
+        }
+
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            try {
+                context.unregisterReceiver(packageReceiver)
+            } catch (_: Throwable) {
+            }
+        }
     }
 
     fun updateAppHidden(entry: AppEntry, hideInLauncher: Boolean) {
