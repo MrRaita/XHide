@@ -45,6 +45,9 @@ object LauncherHook {
     private const val EXTRA_ALL_USERS_QUERY = "hidexposed_all_users_query"
     private const val PER_USER_RANGE = 100000
 
+    @Volatile
+    private var cachedSelfAppId: Int = -1
+
     fun install(classLoader: ClassLoader) {
         try {
             val clazz = XposedHelpers.findClassIfExists(TARGET_CLASS, classLoader)
@@ -53,11 +56,16 @@ object LauncherHook {
                 return
             }
 
-            hookGetUserProfiles(clazz)
-            hookUserManagerGetProfileIds(classLoader)
-            hookProfileAccessChecks(clazz)
-            hookGetLauncherActivities(clazz)
-            hookResolveAndEnabledChecks(clazz)
+            runCatching { hookGetUserProfiles(clazz) }
+                .onFailure { XposedBridge.log("[$TAG] hookGetUserProfiles failed: ${it.message}") }
+            runCatching { hookUserManagerGetProfileIds(classLoader) }
+                .onFailure { XposedBridge.log("[$TAG] hookUserManagerGetProfileIds failed: ${it.message}") }
+            runCatching { hookProfileAccessChecks(clazz) }
+                .onFailure { XposedBridge.log("[$TAG] hookProfileAccessChecks failed: ${it.message}") }
+            runCatching { hookGetLauncherActivities(clazz) }
+                .onFailure { XposedBridge.log("[$TAG] hookGetLauncherActivities failed: ${it.message}") }
+            runCatching { hookResolveAndEnabledChecks(clazz) }
+                .onFailure { XposedBridge.log("[$TAG] hookResolveAndEnabledChecks failed: ${it.message}") }
 
             XposedBridge.log("[$TAG] Successfully installed system hooks on $TARGET_CLASS (Android 11–17)")
         } catch (t: Throwable) {
@@ -532,11 +540,19 @@ object LauncherHook {
     private fun isCallerSelf(callingUid: Int, serviceObject: Any?): Boolean {
         val appId = callingUid % PER_USER_RANGE
         if (appId < Process.FIRST_APPLICATION_UID) return false
+        val cached = cachedSelfAppId
+        if (cached != -1) {
+            return appId == cached
+        }
         val context = getContextFromImpl(serviceObject) ?: return false
         val token = Binder.clearCallingIdentity()
         return try {
             val pkgs = context.packageManager.getPackagesForUid(callingUid)
-            pkgs?.contains(ConfigStore.SELF_PACKAGE) == true
+            val isSelf = pkgs?.contains(ConfigStore.SELF_PACKAGE) == true
+            if (isSelf) {
+                cachedSelfAppId = appId
+            }
+            isSelf
         } catch (_: Throwable) {
             false
         } finally {
@@ -666,18 +682,19 @@ object LauncherHook {
 
             val task = Runnable {
                 for (profile in profiles) {
-                    for (pkg in changedPackages) {
-                        var notified = false
-                        if (monitor != null) {
-                            try {
+                    var monitorSuccess = false
+                    if (monitor != null) {
+                        try {
+                            for (pkg in changedPackages) {
                                 XposedHelpers.callMethod(monitor, "onPackageChanged", pkg, profile)
-                                notified = true
-                            } catch (_: Throwable) {
                             }
+                            monitorSuccess = true
+                        } catch (_: Throwable) {
+                            monitorSuccess = false
                         }
-                        if (!notified) {
-                            broadcastOnPackageChangedFallback(launcherAppsImpl, profile, pkg)
-                        }
+                    }
+                    if (!monitorSuccess) {
+                        broadcastOnPackageChangedBatch(launcherAppsImpl, profile, changedPackages)
                     }
                 }
             }
@@ -690,10 +707,10 @@ object LauncherHook {
         }
     }
 
-    private fun broadcastOnPackageChangedFallback(
+    private fun broadcastOnPackageChangedBatch(
         launcherAppsImpl: Any,
         profile: UserHandle,
-        pkg: String
+        changedPackages: List<String>
     ) {
         try {
             val listeners = XposedHelpers.getObjectField(launcherAppsImpl, "mListeners") as? RemoteCallbackList<*> ?: return
@@ -701,9 +718,11 @@ object LauncherHook {
             try {
                 for (i in 0 until count) {
                     val listener = listeners.getBroadcastItem(i) as? IInterface ?: continue
-                    try {
-                        XposedHelpers.callMethod(listener, "onPackageChanged", profile, pkg)
-                    } catch (_: Throwable) {
+                    for (pkg in changedPackages) {
+                        try {
+                            XposedHelpers.callMethod(listener, "onPackageChanged", profile, pkg)
+                        } catch (_: Throwable) {
+                        }
                     }
                 }
             } finally {
