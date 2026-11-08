@@ -11,11 +11,15 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * Thread-safe configuration store shared between `system_server` (via `/data/system/hidexposed_config.json`)
  * and the companion UI application (via SharedPreferences + zero-lock LauncherApps IPC).
+ *
+ * Supports both per-user keys (`"userId:packageName"`, e.g. `"10:com.discord"`) and global package keys.
  */
 object ConfigStore {
     const val SELF_PACKAGE = "org.lsposed.hidexposed"
+    const val SELF_USER0_KEY = "0:$SELF_PACKAGE"
     const val IPC_PREFIX = "__hidexposed_ipc__:"
     const val IPC_PING = "${IPC_PREFIX}ping"
+    const val IPC_GET_ALL_USERS = "${IPC_PREFIX}all_users"
     const val IPC_UPDATE_PREFIX = "${IPC_PREFIX}update:"
 
     private const val SYSTEM_CONFIG_PATH = "/data/system/hidexposed_config.json"
@@ -26,13 +30,15 @@ object ConfigStore {
         private set
 
     private val whitelistedPackages: MutableSet<String> = ConcurrentHashMap.newKeySet<String>().apply {
-        add(SELF_PACKAGE)
+        add(SELF_USER0_KEY)
     }
 
     private val blacklistedPackages: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     @Volatile
     private var initializedInSystem = false
+
+    fun userKey(userId: Int, packageName: String): String = "$userId:$packageName"
 
     fun ensureSystemLoaded() {
         if (initializedInSystem) return
@@ -43,12 +49,13 @@ object ConfigStore {
         }
     }
 
-    fun shouldHidePackage(packageName: String, isDetectedXposedModule: Boolean): Boolean {
+    fun shouldHidePackage(packageName: String, userId: Int, isDetectedXposedModule: Boolean): Boolean {
         ensureSystemLoaded()
-        if (blacklistedPackages.contains(packageName)) {
+        val uKey = userKey(userId, packageName)
+        if (blacklistedPackages.contains(uKey) || blacklistedPackages.contains(packageName)) {
             return true
         }
-        if (whitelistedPackages.contains(packageName)) {
+        if (whitelistedPackages.contains(uKey) || whitelistedPackages.contains(packageName)) {
             return false
         }
         return autoHideXposedModules && isDetectedXposedModule
@@ -59,7 +66,7 @@ object ConfigStore {
 
     /**
      * Parses an IPC update payload sent by the UI app to `system_server`.
-     * Returns the list of affected package names so `LauncherAppsImpl` can notify launchers immediately.
+     * Returns the list of affected package names so `LauncherAppsImpl` can notify launchers across all users.
      */
     fun applySystemIpcUpdate(payload: String): List<String> {
         return try {
@@ -91,15 +98,18 @@ object ConfigStore {
 
             saveToSystemFile()
 
-            val changed = mutableListOf<String>()
+            val changed = mutableSetOf<String>()
             val changedArray = json.optJSONArray("changed")
             if (changedArray != null) {
                 for (i in 0 until changedArray.length()) {
-                    val pkg = changedArray.optString(i)
-                    if (pkg.isNotBlank()) changed.add(pkg)
+                    val raw = changedArray.optString(i)
+                    if (raw.isNotBlank()) {
+                        val pkgOnly = raw.substringAfter(':', raw)
+                        changed.add(pkgOnly)
+                    }
                 }
             }
-            changed
+            changed.toList()
         } catch (_: Throwable) {
             emptyList()
         }
@@ -120,7 +130,7 @@ object ConfigStore {
                     if (pkg.isNotBlank()) whitelistedPackages.add(pkg)
                 }
             } else {
-                whitelistedPackages.add(SELF_PACKAGE)
+                whitelistedPackages.add(SELF_USER0_KEY)
             }
 
             blacklistedPackages.clear()
@@ -152,7 +162,9 @@ object ConfigStore {
     fun loadUiPrefs(context: Context) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         autoHideXposedModules = prefs.getBoolean("autoHide", true)
-        val wl = prefs.getStringSet("whitelist", setOf(SELF_PACKAGE)) ?: setOf(SELF_PACKAGE)
+        val rawWl = prefs.getStringSet("whitelist", setOf(SELF_USER0_KEY)) ?: setOf(SELF_USER0_KEY)
+        // Migrate legacy unprefixed SELF_PACKAGE to 0:SELF_PACKAGE so User 10 duplicate is hidden by default
+        val wl = rawWl.map { if (it == SELF_PACKAGE) SELF_USER0_KEY else it }.toSet()
         val bl = prefs.getStringSet("blacklist", emptySet()) ?: emptySet()
         whitelistedPackages.clear()
         whitelistedPackages.addAll(wl)
