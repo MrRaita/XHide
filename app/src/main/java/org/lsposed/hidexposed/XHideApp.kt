@@ -20,8 +20,31 @@ class XHideApp : Application() {
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
                 AppDiagnostics.log("CRASH", "Uncaught exception on thread ${thread.name}: ${throwable.message}")
+
+                // Loop guard: prevent infinite restart loops if crashing repeatedly within 6 seconds
+                val loopGuardFile = File(filesDir, "crash_loop_guard.txt")
+                val now = System.currentTimeMillis()
+                val lastCrashTime = if (loopGuardFile.exists()) {
+                    loopGuardFile.readText().trim().toLongOrNull() ?: 0L
+                } else {
+                    0L
+                }
+                loopGuardFile.writeText(now.toString())
+
+                if (now - lastCrashTime < 6000L) {
+                    // Crashing continuously; pass directly to system handler to avoid reboot loop
+                    defaultHandler?.uncaughtException(thread, throwable)
+                    return@setDefaultUncaughtExceptionHandler
+                }
+
+                val isHookActive = try {
+                    ConfigStore.pingSystemHook(this)
+                } catch (_: Throwable) {
+                    false
+                }
+
                 val crashReport = AppDiagnostics.collectDeviceInfoMarkdown(
-                    isHookActive = false,
+                    isHookActive = isHookActive,
                     exception = throwable,
                     userNotes = "Auto-captured crash on thread ${thread.name}"
                 )

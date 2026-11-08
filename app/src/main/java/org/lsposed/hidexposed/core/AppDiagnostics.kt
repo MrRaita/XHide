@@ -84,8 +84,18 @@ object AppDiagnostics {
 
         try {
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-            clipboard?.setPrimaryClip(ClipData.newPlainText("xhide_issue_report", fullReport))
-            Toast.makeText(context, "Teşhis raporu panoya kopyalandı", Toast.LENGTH_SHORT).show()
+            val clipData = ClipData.newPlainText("xhide_issue_report", fullReport).apply {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    description.extras = android.os.PersistableBundle().apply {
+                        putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true)
+                    }
+                }
+            }
+            clipboard?.setPrimaryClip(clipData)
+            val toastMsg = org.lsposed.hidexposed.ui.Localization.resolveStrings(
+                org.lsposed.hidexposed.data.ConfigStore.appLanguage
+            ).diagnosticReportCopiedToast
+            Toast.makeText(context, toastMsg, Toast.LENGTH_SHORT).show()
         } catch (_: Throwable) {
         }
 
