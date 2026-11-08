@@ -1,21 +1,28 @@
 package org.lsposed.hidexposed.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Drawable
+import android.os.Build
 import android.os.Bundle
 import android.os.Process
 import android.os.UserHandle
 import android.os.UserManager
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,29 +30,40 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -56,15 +74,28 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import org.lsposed.hidexposed.core.ModuleCache
 import org.lsposed.hidexposed.data.ConfigStore
 import org.lsposed.hidexposed.ui.theme.HideXposedTheme
@@ -82,8 +113,19 @@ data class AppEntry(
     val uniqueKey: String get() = ConfigStore.userKey(userId, packageName)
 }
 
+data class LauncherInfo(
+    val label: String,
+    val packageName: String,
+    val icon: ImageBitmap?
+)
+
+enum class MainTab {
+    HOME, APPS, SETTINGS
+}
+
 sealed interface FilterMode {
     data object XposedOnly : FilterMode
+    data object HiddenOnly : FilterMode
     data object AllApps : FilterMode
     data class ByUser(val userId: Int) : FilterMode
 }
@@ -94,65 +136,139 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         ConfigStore.loadUiPrefs(this)
         setContent {
-            HideXposedTheme {
-                MainScreen()
+            var lang by remember { mutableStateOf(ConfigStore.appLanguage) }
+            var themeMode by remember { mutableStateOf(ConfigStore.themeMode) }
+            var amoledBlack by remember { mutableStateOf(ConfigStore.amoledBlack) }
+            var dynamicColor by remember { mutableStateOf(ConfigStore.dynamicColor) }
+
+            HideXposedTheme(
+                themeMode = themeMode,
+                amoledBlack = amoledBlack,
+                dynamicColor = dynamicColor
+            ) {
+                MainScreen(
+                    langCode = lang,
+                    themeMode = themeMode,
+                    amoledBlack = amoledBlack,
+                    dynamicColor = dynamicColor,
+                    onUpdateAppearance = { newLang, newTheme, newAmoled, newDynamic, newShowSys ->
+                        lang = newLang
+                        themeMode = newTheme
+                        amoledBlack = newAmoled
+                        dynamicColor = newDynamic
+                        ConfigStore.saveUiAppearancePrefs(
+                            context = this@MainActivity,
+                            language = newLang,
+                            theme = newTheme,
+                            amoled = newAmoled,
+                            dynamic = newDynamic,
+                            showSystem = newShowSys
+                        )
+                    }
+                )
             }
         }
     }
 }
 
 @Composable
-fun MainScreen() {
+fun MainScreen(
+    langCode: String,
+    themeMode: String,
+    amoledBlack: Boolean,
+    dynamicColor: Boolean,
+    onUpdateAppearance: (String, String, Boolean, Boolean, Boolean) -> Unit
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val strings = remember(langCode) { Localization.resolveStrings(langCode) }
 
+    var currentTab by remember { mutableStateOf(MainTab.HOME) }
     var isHookActive by remember { mutableStateOf(false) }
     var autoHideModules by remember { mutableStateOf(ConfigStore.autoHideXposedModules) }
+    var autoHideCloneModules by remember { mutableStateOf(ConfigStore.autoHideCloneModules) }
+    var showSystemApps by remember { mutableStateOf(ConfigStore.showSystemApps) }
     var whitelist by remember { mutableStateOf(ConfigStore.getWhitelist()) }
     var blacklist by remember { mutableStateOf(ConfigStore.getBlacklist()) }
     var apps by remember { mutableStateOf<List<AppEntry>>(emptyList()) }
     var availableUserIds by remember { mutableStateOf<List<Int>>(listOf(0)) }
+    var defaultLauncher by remember { mutableStateOf<LauncherInfo?>(null) }
     var isLoading by remember { mutableStateOf(true) }
     var searchQuery by remember { mutableStateOf("") }
     var filterMode by remember { mutableStateOf<FilterMode>(FilterMode.XposedOnly) }
 
-    fun isEntryHidden(entry: AppEntry, wl: Set<String>, bl: Set<String>, autoHide: Boolean): Boolean {
+    fun isEntryHidden(
+        entry: AppEntry,
+        wl: Set<String> = whitelist,
+        bl: Set<String> = blacklist,
+        autoHide: Boolean = autoHideModules,
+        autoHideClone: Boolean = autoHideCloneModules
+    ): Boolean {
         val uKey = entry.uniqueKey
         return when {
             bl.contains(uKey) || bl.contains(entry.packageName) -> true
             wl.contains(uKey) || wl.contains(entry.packageName) -> false
-            else -> autoHide && entry.isXposedModule
+            !entry.isXposedModule -> false
+            entry.userId == 0 -> autoHide
+            else -> autoHide && autoHideClone
         }
     }
 
-    fun refreshState() {
+    fun syncWithSystem(
+        newAutoHide: Boolean = autoHideModules,
+        newAutoHideClone: Boolean = autoHideCloneModules,
+        newWl: Set<String> = whitelist,
+        newBl: Set<String> = blacklist,
+        changedPkgs: List<String>
+    ) {
+        scope.launch(Dispatchers.IO) {
+            ConfigStore.saveUiPrefsAndSync(
+                context = context,
+                autoHide = newAutoHide,
+                autoHideClone = newAutoHideClone,
+                whitelist = newWl,
+                blacklist = newBl,
+                changedPackages = changedPkgs
+            )
+        }
+    }
+
+    fun refreshState(showToastOnDone: Boolean = false) {
         scope.launch {
-            isLoading = true
+            if (apps.isEmpty()) isLoading = true
             val active = withContext(Dispatchers.IO) {
                 ConfigStore.pingSystemHook(context)
             }
             val loadedApps = withContext(Dispatchers.IO) {
                 loadInstalledAppsAcrossProfiles(context)
             }
+            val launcher = withContext(Dispatchers.IO) {
+                detectDefaultLauncher(context)
+            }
             isHookActive = active
             apps = loadedApps
+            defaultLauncher = launcher
             availableUserIds = loadedApps.map { it.userId }.distinct().sorted()
             if (active) {
                 withContext(Dispatchers.IO) {
-                    val hiddenPkgs = loadedApps
-                        .filter { isEntryHidden(it, whitelist, blacklist, autoHideModules) }
+                    val affectedPkgs = loadedApps
+                        .filter { isEntryHidden(it) || it.isXposedModule }
                         .map { it.packageName }
                         .distinct()
                     ConfigStore.saveUiPrefsAndSync(
                         context = context,
                         autoHide = autoHideModules,
+                        autoHideClone = autoHideCloneModules,
                         whitelist = whitelist,
                         blacklist = blacklist,
-                        changedPackages = hiddenPkgs
+                        changedPackages = affectedPkgs
                     )
                 }
             }
             isLoading = false
+            if (showToastOnDone) {
+                Toast.makeText(context, strings.launcherRefreshedToast, Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -165,41 +281,593 @@ fun MainScreen() {
         val newBl = blacklist.toMutableSet()
         val uKey = entry.uniqueKey
 
-        // Clean up any legacy unprefixed package key if toggling per-user
         newWl.remove(entry.packageName)
         newBl.remove(entry.packageName)
 
+        val defaultHidden = entry.isXposedModule &&
+            (if (entry.userId == 0) autoHideModules else (autoHideModules && autoHideCloneModules))
+
         if (hideInLauncher) {
             newWl.remove(uKey)
-            if (!entry.isXposedModule || !autoHideModules) {
+            if (!defaultHidden) {
                 newBl.add(uKey)
             }
         } else {
             newBl.remove(uKey)
-            if (entry.isXposedModule) {
+            if (defaultHidden) {
                 newWl.add(uKey)
             }
         }
 
         whitelist = newWl
         blacklist = newBl
-        scope.launch(Dispatchers.IO) {
-            ConfigStore.saveUiPrefsAndSync(
-                context = context,
-                autoHide = autoHideModules,
-                whitelist = newWl,
-                blacklist = newBl,
-                changedPackages = listOf(entry.packageName)
+        syncWithSystem(newWl = newWl, newBl = newBl, changedPkgs = listOf(entry.packageName))
+    }
+
+    val statusBarPadding = WindowInsets.statusBars.asPaddingValues()
+
+    Scaffold(
+        topBar = {
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 1.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = statusBarPadding.calculateTopPadding())
+                        .height(48.dp)
+                        .padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "HideXposedIcons",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Surface(
+                        color = if (isHookActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer,
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Text(
+                            text = if (isHookActive) "ACTIVE" else "INACTIVE",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isHookActive) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
+                    IconButton(
+                        onClick = { refreshState(showToastOnDone = true) },
+                        modifier = Modifier.size(34.dp)
+                    ) {
+                        RefreshVectorIcon()
+                    }
+                }
+            }
+        },
+        bottomBar = {
+            NavigationBar(
+                modifier = Modifier
+                    .navigationBarsPadding()
+                    .height(64.dp),
+                tonalElevation = 3.dp
+            ) {
+                NavigationBarItem(
+                    selected = currentTab == MainTab.HOME,
+                    onClick = { currentTab = MainTab.HOME },
+                    icon = { HomeVectorIcon() },
+                    label = { Text(strings.navHome, fontSize = 11.sp) }
+                )
+                NavigationBarItem(
+                    selected = currentTab == MainTab.APPS,
+                    onClick = { currentTab = MainTab.APPS },
+                    icon = { AppsVectorIcon() },
+                    label = { Text(strings.navApps, fontSize = 11.sp) }
+                )
+                NavigationBarItem(
+                    selected = currentTab == MainTab.SETTINGS,
+                    onClick = { currentTab = MainTab.SETTINGS },
+                    icon = { SettingsVectorIcon() },
+                    label = { Text(strings.navSettings, fontSize = 11.sp) }
+                )
+            }
+        }
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+        ) {
+            if (isLoading) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(modifier = Modifier.size(32.dp), strokeWidth = 3.dp)
+                }
+            } else {
+                when (currentTab) {
+                    MainTab.HOME -> HomeTabScreen(
+                        strings = strings,
+                        isHookActive = isHookActive,
+                        apps = apps,
+                        availableUserIds = availableUserIds,
+                        autoHideModules = autoHideModules,
+                        defaultLauncher = defaultLauncher,
+                        isEntryHidden = { isEntryHidden(it) },
+                        onOpenAppsFilter = { mode ->
+                            filterMode = mode
+                            currentTab = MainTab.APPS
+                        },
+                        onOpenSettings = {
+                            currentTab = MainTab.SETTINGS
+                        },
+                        onRefreshLauncher = {
+                            refreshState(showToastOnDone = true)
+                        },
+                        onToggleAppHidden = { entry, hide ->
+                            updateAppHidden(entry, hide)
+                        }
+                    )
+
+                    MainTab.APPS -> AppsTabScreen(
+                        strings = strings,
+                        apps = apps,
+                        availableUserIds = availableUserIds,
+                        showSystemApps = showSystemApps,
+                        searchQuery = searchQuery,
+                        onSearchChange = { searchQuery = it },
+                        filterMode = filterMode,
+                        onFilterModeChange = { filterMode = it },
+                        isEntryHidden = { isEntryHidden(it) },
+                        onToggleAppHidden = { entry, hide ->
+                            updateAppHidden(entry, hide)
+                        }
+                    )
+
+                    MainTab.SETTINGS -> SettingsTabScreen(
+                        context = context,
+                        strings = strings,
+                        langCode = langCode,
+                        themeMode = themeMode,
+                        amoledBlack = amoledBlack,
+                        dynamicColor = dynamicColor,
+                        autoHideModules = autoHideModules,
+                        autoHideCloneModules = autoHideCloneModules,
+                        showSystemApps = showSystemApps,
+                        isSelfHidden = !whitelist.contains(ConfigStore.SELF_USER0_KEY) &&
+                            (autoHideModules || blacklist.contains(ConfigStore.SELF_USER0_KEY)),
+                        onToggleAutoHide = { checked ->
+                            autoHideModules = checked
+                            val modPkgs = apps.filter { it.isXposedModule }.map { it.packageName }.distinct()
+                            syncWithSystem(newAutoHide = checked, changedPkgs = modPkgs)
+                        },
+                        onToggleAutoHideClone = { checked ->
+                            autoHideCloneModules = checked
+                            val modPkgs = apps.filter { it.isXposedModule && it.userId != 0 }.map { it.packageName }.distinct()
+                            syncWithSystem(newAutoHideClone = checked, changedPkgs = modPkgs)
+                        },
+                        onToggleHideSelf = { hideSelf ->
+                            val newWl = whitelist.toMutableSet()
+                            val newBl = blacklist.toMutableSet()
+                            if (hideSelf) {
+                                newWl.remove(ConfigStore.SELF_USER0_KEY)
+                                newBl.add(ConfigStore.SELF_USER0_KEY)
+                            } else {
+                                newBl.remove(ConfigStore.SELF_USER0_KEY)
+                                newWl.add(ConfigStore.SELF_USER0_KEY)
+                            }
+                            whitelist = newWl
+                            blacklist = newBl
+                            syncWithSystem(newWl = newWl, newBl = newBl, changedPkgs = listOf(ConfigStore.SELF_PACKAGE))
+                        },
+                        onToggleShowSystemApps = { showSys ->
+                            showSystemApps = showSys
+                            onUpdateAppearance(langCode, themeMode, amoledBlack, dynamicColor, showSys)
+                        },
+                        onUpdateAppearance = { newLang, newTheme, newAmoled, newDynamic ->
+                            onUpdateAppearance(newLang, newTheme, newAmoled, newDynamic, showSystemApps)
+                        },
+                        onImportConfig = { jsonStr ->
+                            try {
+                                val json = JSONObject(jsonStr)
+                                val newAuto = json.optBoolean("autoHide", true)
+                                val newAutoClone = json.optBoolean("autoHideClone", true)
+                                val newWl = mutableSetOf<String>()
+                                val wlArr = json.optJSONArray("whitelist")
+                                if (wlArr != null) {
+                                    for (i in 0 until wlArr.length()) {
+                                        val s = wlArr.optString(i)
+                                        if (s.isNotBlank()) newWl.add(s)
+                                    }
+                                }
+                                val newBl = mutableSetOf<String>()
+                                val blArr = json.optJSONArray("blacklist")
+                                if (blArr != null) {
+                                    for (i in 0 until blArr.length()) {
+                                        val s = blArr.optString(i)
+                                        if (s.isNotBlank()) newBl.add(s)
+                                    }
+                                }
+                                autoHideModules = newAuto
+                                autoHideCloneModules = newAutoClone
+                                whitelist = newWl
+                                blacklist = newBl
+                                val allPkgs = apps.map { it.packageName }.distinct()
+                                syncWithSystem(
+                                    newAutoHide = newAuto,
+                                    newAutoHideClone = newAutoClone,
+                                    newWl = newWl,
+                                    newBl = newBl,
+                                    changedPkgs = allPkgs
+                                )
+                                Toast.makeText(context, strings.importedToast, Toast.LENGTH_SHORT).show()
+                            } catch (_: Throwable) {
+                                Toast.makeText(context, strings.importFailedToast, Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        onResetAll = {
+                            val defaultWl = setOf(ConfigStore.SELF_USER0_KEY)
+                            val defaultBl = emptySet<String>()
+                            autoHideModules = true
+                            autoHideCloneModules = true
+                            whitelist = defaultWl
+                            blacklist = defaultBl
+                            val allPkgs = apps.map { it.packageName }.distinct()
+                            syncWithSystem(
+                                newAutoHide = true,
+                                newAutoHideClone = true,
+                                newWl = defaultWl,
+                                newBl = defaultBl,
+                                changedPkgs = allPkgs
+                            )
+                            Toast.makeText(context, strings.resetDoneToast, Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeTabScreen(
+    strings: AppStrings,
+    isHookActive: Boolean,
+    apps: List<AppEntry>,
+    availableUserIds: List<Int>,
+    autoHideModules: Boolean,
+    defaultLauncher: LauncherInfo?,
+    isEntryHidden: (AppEntry) -> Boolean,
+    onOpenAppsFilter: (FilterMode) -> Unit,
+    onOpenSettings: () -> Unit,
+    onRefreshLauncher: () -> Unit,
+    onToggleAppHidden: (AppEntry, Boolean) -> Unit
+) {
+    val hiddenApps = remember(apps, autoHideModules, isEntryHidden) {
+        apps.filter { isEntryHidden(it) }
+    }
+    val xposedCount = remember(apps) { apps.count { it.isXposedModule } }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        // 1. Compact Status Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = if (isHookActive) {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    MaterialTheme.colorScheme.errorContainer
+                }
+            )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 12.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(9.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (isHookActive) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.error
+                            )
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (isHookActive) strings.hookActiveTitle else strings.hookInactiveTitle,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                        text = "${Build.MODEL} · SDK ${Build.VERSION.SDK_INT}",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = if (isHookActive) strings.hookActiveDesc else strings.hookInactiveDesc,
+                    fontSize = 11.5.sp,
+                    lineHeight = 15.sp
+                )
+            }
+        }
+
+        // 2. 2x2 Compact Clickable Dashboard Stats
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            DashboardStatCard(
+                modifier = Modifier.weight(1f),
+                title = strings.statHiddenIcons,
+                value = hiddenApps.size.toString(),
+                subtitle = strings.viewAll,
+                onClick = { onOpenAppsFilter(FilterMode.HiddenOnly) }
+            )
+            DashboardStatCard(
+                modifier = Modifier.weight(1f),
+                title = strings.statXposedModules,
+                value = xposedCount.toString(),
+                subtitle = "APK / Manifest / API 100",
+                onClick = { onOpenAppsFilter(FilterMode.XposedOnly) }
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            val profileSummary = availableUserIds.joinToString(" · ") { "User $it" }
+            DashboardStatCard(
+                modifier = Modifier.weight(1f),
+                title = strings.statActiveProfiles,
+                value = availableUserIds.size.toString(),
+                subtitle = profileSummary,
+                onClick = {
+                    val targetUser = availableUserIds.lastOrNull() ?: 0
+                    onOpenAppsFilter(FilterMode.ByUser(targetUser))
+                }
+            )
+            DashboardStatCard(
+                modifier = Modifier.weight(1f),
+                title = strings.statAutoHide,
+                value = if (autoHideModules) strings.enabled else strings.disabled,
+                subtitle = strings.navSettings,
+                onClick = onOpenSettings
+            )
+        }
+
+        // 3. Active Default Launcher & Quick Refresh Card
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            tonalElevation = 2.dp
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (defaultLauncher?.icon != null) {
+                    Image(
+                        bitmap = defaultLauncher.icon,
+                        contentDescription = defaultLauncher.label,
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = strings.activeLauncherTitle,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = defaultLauncher?.label ?: "System Launcher",
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = defaultLauncher?.packageName ?: "android",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                FilledTonalButton(
+                    onClick = onRefreshLauncher,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.height(34.dp)
+                ) {
+                    Text(strings.refreshLauncherBtn, fontSize = 11.5.sp)
+                }
+            }
+        }
+
+        // 4. Currently Hidden Icons Quick Preview Strip
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            tonalElevation = 2.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "${strings.quickHiddenPreviewTitle} (${hiddenApps.size})",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = strings.tapToUnhideHint,
+                            fontSize = 10.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    TextButton(
+                        onClick = { onOpenAppsFilter(FilterMode.HiddenOnly) },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(28.dp)
+                    ) {
+                        Text(strings.viewAll, fontSize = 11.5.sp)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (hiddenApps.isEmpty()) {
+                    Text(
+                        text = strings.noHiddenAppsYet,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                } else {
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        contentPadding = PaddingValues(vertical = 2.dp)
+                    ) {
+                        items(hiddenApps, key = { it.uniqueKey }) { app ->
+                            Column(
+                                modifier = Modifier
+                                    .width(62.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable { onToggleAppHidden(app, false) }
+                                    .padding(vertical = 4.dp, horizontal = 2.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Box {
+                                    if (app.icon != null) {
+                                        Image(
+                                            bitmap = app.icon,
+                                            contentDescription = app.label,
+                                            modifier = Modifier
+                                                .size(38.dp)
+                                                .clip(RoundedCornerShape(9.dp))
+                                        )
+                                    }
+                                    if (app.userId != 0) {
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.tertiary,
+                                            shape = RoundedCornerShape(4.dp),
+                                            modifier = Modifier.align(Alignment.BottomEnd)
+                                        ) {
+                                            Text(
+                                                text = "U${app.userId}",
+                                                fontSize = 8.sp,
+                                                color = MaterialTheme.colorScheme.onTertiary,
+                                                modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = app.label,
+                                    fontSize = 10.5.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DashboardStatCard(
+    modifier: Modifier = Modifier,
+    title: String,
+    value: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        tonalElevation = 2.dp
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+        ) {
+            Text(
+                text = title,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = value,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                text = subtitle,
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
+}
 
-    val filteredApps = remember(apps, searchQuery, filterMode) {
+@Composable
+private fun AppsTabScreen(
+    strings: AppStrings,
+    apps: List<AppEntry>,
+    availableUserIds: List<Int>,
+    showSystemApps: Boolean,
+    searchQuery: String,
+    onSearchChange: (String) -> Unit,
+    filterMode: FilterMode,
+    onFilterModeChange: (FilterMode) -> Unit,
+    isEntryHidden: (AppEntry) -> Boolean,
+    onToggleAppHidden: (AppEntry, Boolean) -> Unit
+) {
+    val filteredApps = remember(apps, searchQuery, filterMode, showSystemApps, isEntryHidden) {
         apps.filter { app ->
+            val allowSystem = showSystemApps || !app.isSystemApp || app.isXposedModule || app.userId != 0
             val matchesMode = when (val mode = filterMode) {
                 is FilterMode.XposedOnly -> app.isXposedModule
-                is FilterMode.AllApps -> !app.isSystemApp || app.isXposedModule || app.userId != 0
-                is FilterMode.ByUser -> app.userId == mode.userId && (!app.isSystemApp || app.isXposedModule || app.userId != 0)
+                is FilterMode.HiddenOnly -> isEntryHidden(app)
+                is FilterMode.AllApps -> allowSystem
+                is FilterMode.ByUser -> app.userId == mode.userId && allowSystem
             }
             val matchesQuery = searchQuery.isBlank() ||
                 app.label.contains(searchQuery, ignoreCase = true) ||
@@ -208,279 +876,562 @@ fun MainScreen() {
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text("HideXposedIcons", fontWeight = FontWeight.Bold)
+    val xposedCount = remember(apps) { apps.count { it.isXposedModule } }
+    val hiddenCount = remember(apps, isEntryHidden) { apps.count { isEntryHidden(it) } }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 12.dp)
+    ) {
+        Spacer(modifier = Modifier.height(6.dp))
+
+        // Compact Search Bar (38dp height)
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(38.dp),
+            shape = RoundedCornerShape(10.dp),
+            tonalElevation = 2.dp
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SearchVectorIcon()
+                Spacer(modifier = Modifier.width(8.dp))
+                Box(modifier = Modifier.weight(1f)) {
+                    if (searchQuery.isEmpty()) {
                         Text(
-                            "System-Level Multi-User Icon Filter",
-                            style = MaterialTheme.typography.bodySmall,
+                            text = strings.searchPlaceholder,
+                            fontSize = 12.5.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                },
-                actions = {
-                    TextButton(onClick = { refreshState() }) {
-                        Text("Yenile")
-                    }
+                    BasicTextField(
+                        value = searchQuery,
+                        onValueChange = onSearchChange,
+                        singleLine = true,
+                        textStyle = TextStyle(
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 12.5.sp
+                        ),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
+                if (searchQuery.isNotEmpty()) {
+                    Text(
+                        text = "✕",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .clickable { onSearchChange("") }
+                            .padding(4.dp)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        // Compact Filter Chips Row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            CompactFilterChip(
+                selected = filterMode is FilterMode.XposedOnly,
+                label = "${strings.filterXposed} ($xposedCount)",
+                onClick = { onFilterModeChange(FilterMode.XposedOnly) }
+            )
+            CompactFilterChip(
+                selected = filterMode is FilterMode.HiddenOnly,
+                label = "${strings.filterHidden} ($hiddenCount)",
+                onClick = { onFilterModeChange(FilterMode.HiddenOnly) }
+            )
+            for (uid in availableUserIds) {
+                val countForUser = apps.count {
+                    it.userId == uid && (showSystemApps || !it.isSystemApp || it.isXposedModule || it.userId != 0)
+                }
+                CompactFilterChip(
+                    selected = (filterMode as? FilterMode.ByUser)?.userId == uid,
+                    label = "User $uid ($countForUser)",
+                    onClick = { onFilterModeChange(FilterMode.ByUser(uid)) }
+                )
+            }
+            CompactFilterChip(
+                selected = filterMode is FilterMode.AllApps,
+                label = strings.filterAll,
+                onClick = { onFilterModeChange(FilterMode.AllApps) }
             )
         }
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = 16.dp)
-        ) {
-            // Status Banner
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isHookActive) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.errorContainer
-                    }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        if (filteredApps.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    text = strings.emptyAppsList,
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(12.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (isHookActive) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.error
-                            )
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = if (isHookActive) "Sistem Hook Aktif (LauncherAppsService)" else "Sistem Hook Bekleniyor",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = if (isHookActive) {
-                                "Tüm profiller (User 0, User 10 vb.) üzerinde gerçek zamanlı gizleme aktif."
-                            } else {
-                                "Vector / LSPosed üzerinden modülü etkinleştirip kapsamda Sistem Çerçevesi (android) seçili olduğundan emin olun."
-                            },
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                }
             }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Auto-hide toggle card
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp)
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Xposed Modüllerini Otomatik Gizle",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Text(
-                            text = "Tüm profillerdeki Xposed modüllerini otomatik olarak launcher'dan gizler",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Switch(
-                        checked = autoHideModules,
-                        onCheckedChange = { checked ->
-                            autoHideModules = checked
-                            val modulePackages = apps.filter { it.isXposedModule }.map { it.packageName }.distinct()
-                            scope.launch(Dispatchers.IO) {
-                                ConfigStore.saveUiPrefsAndSync(
-                                    context = context,
-                                    autoHide = checked,
-                                    whitelist = whitelist,
-                                    blacklist = blacklist,
-                                    changedPackages = modulePackages
+                items(filteredApps, key = { it.uniqueKey }) { entry ->
+                    val isHidden = isEntryHidden(entry)
+
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { onToggleAppHidden(entry, !isHidden) },
+                        shape = RoundedCornerShape(10.dp),
+                        tonalElevation = 1.dp
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (entry.icon != null) {
+                                Image(
+                                    bitmap = entry.icon,
+                                    contentDescription = entry.label,
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                            }
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = entry.label,
+                                        fontSize = 13.5.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    if (entry.userId != 0) {
+                                        Spacer(modifier = Modifier.width(5.dp))
+                                        MiniBadge(
+                                            text = "User ${entry.userId}",
+                                            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                            contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                                        )
+                                    }
+                                    if (entry.isXposedModule) {
+                                        Spacer(modifier = Modifier.width(5.dp))
+                                        MiniBadge(
+                                            text = "Xposed",
+                                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                        )
+                                    }
+                                    if (entry.isSystemApp && !entry.isXposedModule) {
+                                        Spacer(modifier = Modifier.width(5.dp))
+                                        MiniBadge(
+                                            text = strings.badgeSystem,
+                                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = entry.packageName,
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
+
+                            Spacer(modifier = Modifier.width(6.dp))
+
+                            Switch(
+                                checked = isHidden,
+                                onCheckedChange = { hide ->
+                                    onToggleAppHidden(entry, hide)
+                                },
+                                modifier = Modifier
+                                    .scale(0.78f)
+                                    .height(28.dp)
+                            )
                         }
-                    )
+                    }
                 }
             }
+        }
+    }
+}
 
-            Spacer(modifier = Modifier.height(12.dp))
+@Composable
+private fun CompactFilterChip(
+    selected: Boolean,
+    label: String,
+    onClick: () -> Unit
+) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(label, fontSize = 11.5.sp) },
+        modifier = Modifier.height(30.dp)
+    )
+}
 
-            // Search Bar
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Modül veya paket ara (örn. reddidnt, discord)...") },
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp)
+@Composable
+private fun MiniBadge(
+    text: String,
+    containerColor: androidx.compose.ui.graphics.Color,
+    contentColor: androidx.compose.ui.graphics.Color
+) {
+    Surface(
+        color = containerColor,
+        shape = RoundedCornerShape(4.dp)
+    ) {
+        Text(
+            text = text,
+            fontSize = 9.5.sp,
+            fontWeight = FontWeight.Medium,
+            color = contentColor,
+            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+        )
+    }
+}
+
+@Composable
+private fun SettingsTabScreen(
+    context: Context,
+    strings: AppStrings,
+    langCode: String,
+    themeMode: String,
+    amoledBlack: Boolean,
+    dynamicColor: Boolean,
+    autoHideModules: Boolean,
+    autoHideCloneModules: Boolean,
+    showSystemApps: Boolean,
+    isSelfHidden: Boolean,
+    onToggleAutoHide: (Boolean) -> Unit,
+    onToggleAutoHideClone: (Boolean) -> Unit,
+    onToggleHideSelf: (Boolean) -> Unit,
+    onToggleShowSystemApps: (Boolean) -> Unit,
+    onUpdateAppearance: (String, String, Boolean, Boolean) -> Unit,
+    onImportConfig: (String) -> Unit,
+    onResetAll: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        // Section 1: Hiding Rules
+        SettingsSectionCard(title = strings.sectionHidingRules) {
+            CompactSwitchRow(
+                title = strings.autoHideTitle,
+                subtitle = strings.autoHideDesc,
+                checked = autoHideModules,
+                onCheckedChange = onToggleAutoHide
             )
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
+            CompactSwitchRow(
+                title = strings.autoHideCloneTitle,
+                subtitle = strings.autoHideCloneDesc,
+                checked = autoHideCloneModules,
+                onCheckedChange = onToggleAutoHideClone
+            )
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
+            CompactSwitchRow(
+                title = strings.hideSelfTitle,
+                subtitle = strings.hideSelfDesc,
+                checked = isSelfHidden,
+                onCheckedChange = onToggleHideSelf
+            )
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
+            CompactSwitchRow(
+                title = strings.showSystemAppsTitle,
+                subtitle = strings.showSystemAppsDesc,
+                checked = showSystemApps,
+                onCheckedChange = onToggleShowSystemApps
+            )
+        }
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Multi-User Filter Chips
+        // Section 2: Appearance & Language
+        SettingsSectionCard(title = strings.sectionAppearance) {
+            Text(
+                text = strings.languageTitle,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium
+            )
+            Spacer(modifier = Modifier.height(6.dp))
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                FilterChip(
-                    selected = filterMode is FilterMode.XposedOnly,
-                    onClick = { filterMode = FilterMode.XposedOnly },
-                    label = { Text("Xposed (${apps.count { it.isXposedModule }})") }
-                )
-                for (uid in availableUserIds) {
-                    val countForUser = apps.count {
-                        it.userId == uid && (!it.isSystemApp || it.isXposedModule || it.userId != 0)
-                    }
-                    FilterChip(
-                        selected = (filterMode as? FilterMode.ByUser)?.userId == uid,
-                        onClick = { filterMode = FilterMode.ByUser(uid) },
-                        label = {
-                            Text(
-                                if (uid == 0) "User 0 ($countForUser)"
-                                else "User $uid ($countForUser)"
-                            )
+                for ((code, displayName) in Localization.languageOptions) {
+                    CompactFilterChip(
+                        selected = langCode == code,
+                        label = if (code == "SYSTEM") strings.languageSystem else displayName,
+                        onClick = {
+                            onUpdateAppearance(code, themeMode, amoledBlack, dynamicColor)
                         }
                     )
                 }
-                FilterChip(
-                    selected = filterMode is FilterMode.AllApps,
-                    onClick = { filterMode = FilterMode.AllApps },
-                    label = { Text("Tümü") }
-                )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), thickness = 0.5.dp)
 
-            if (isLoading) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(filteredApps, key = { it.uniqueKey }) { entry ->
-                        val isHidden = isEntryHidden(entry, whitelist, blacklist, autoHideModules)
-
-                        Surface(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp),
-                            tonalElevation = 2.dp
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                if (entry.icon != null) {
-                                    Image(
-                                        bitmap = entry.icon,
-                                        contentDescription = entry.label,
-                                        modifier = Modifier
-                                            .size(42.dp)
-                                            .clip(RoundedCornerShape(10.dp))
-                                    )
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                }
-
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text = entry.label,
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            fontWeight = FontWeight.Medium,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f, fill = false)
-                                        )
-                                        if (entry.userId != 0) {
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Surface(
-                                                color = MaterialTheme.colorScheme.tertiaryContainer,
-                                                shape = RoundedCornerShape(6.dp)
-                                            ) {
-                                                Text(
-                                                    text = "User ${entry.userId}",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                )
-                                            }
-                                        }
-                                        if (entry.isXposedModule) {
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Surface(
-                                                color = MaterialTheme.colorScheme.secondaryContainer,
-                                                shape = RoundedCornerShape(6.dp)
-                                            ) {
-                                                Text(
-                                                    text = "Xposed",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-                                    Text(
-                                        text = entry.packageName,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Switch(
-                                        checked = isHidden,
-                                        onCheckedChange = { hide ->
-                                            updateAppHidden(entry, hide)
-                                        }
-                                    )
-                                    Text(
-                                        text = if (isHidden) "Gizli" else "Görünür",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = if (isHidden) {
-                                            MaterialTheme.colorScheme.primary
-                                        } else {
-                                            MaterialTheme.colorScheme.onSurfaceVariant
-                                        }
-                                    )
-                                }
-                            }
+            Text(
+                text = strings.themeTitle,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                val themes = listOf(
+                    "SYSTEM" to strings.themeSystem,
+                    "DARK" to strings.themeDark,
+                    "LIGHT" to strings.themeLight
+                )
+                for ((code, label) in themes) {
+                    CompactFilterChip(
+                        selected = themeMode == code,
+                        label = label,
+                        onClick = {
+                            onUpdateAppearance(langCode, code, amoledBlack, dynamicColor)
                         }
+                    )
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), thickness = 0.5.dp)
+            CompactSwitchRow(
+                title = strings.amoledTitle,
+                subtitle = strings.amoledDesc,
+                checked = amoledBlack,
+                onCheckedChange = { checked ->
+                    onUpdateAppearance(langCode, themeMode, checked, dynamicColor)
+                }
+            )
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
+            CompactSwitchRow(
+                title = strings.dynamicColorTitle,
+                subtitle = strings.dynamicColorDesc,
+                checked = dynamicColor,
+                onCheckedChange = { checked ->
+                    onUpdateAppearance(langCode, themeMode, amoledBlack, checked)
+                }
+            )
+        }
+
+        // Section 3: Backup & Reset
+        SettingsSectionCard(title = strings.sectionBackupReset) {
+            CompactActionRow(
+                title = strings.exportConfigTitle,
+                subtitle = strings.exportConfigDesc,
+                onClick = {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                    val json = ConfigStore.exportConfigJson()
+                    clipboard?.setPrimaryClip(ClipData.newPlainText("hidexposed_config", json))
+                    Toast.makeText(context, strings.copiedToast, Toast.LENGTH_SHORT).show()
+                }
+            )
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
+            CompactActionRow(
+                title = strings.importConfigTitle,
+                subtitle = strings.importConfigDesc,
+                onClick = {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                    val text = clipboard?.primaryClip?.getItemAt(0)?.text?.toString()
+                    if (!text.isNullOrBlank()) {
+                        onImportConfig(text)
+                    } else {
+                        Toast.makeText(context, strings.importFailedToast, Toast.LENGTH_SHORT).show()
                     }
                 }
+            )
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
+            CompactActionRow(
+                title = strings.resetAllTitle,
+                subtitle = strings.resetAllDesc,
+                isDestructive = true,
+                onClick = onResetAll
+            )
+        }
+
+        // Section 4: About & System
+        SettingsSectionCard(title = strings.sectionAbout) {
+            CompactInfoRow(
+                title = strings.protectedManagersTitle,
+                value = "Vector · LSPosed · KernelSU · Magisk"
+            )
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
+            CompactInfoRow(
+                title = strings.hookTargetTitle,
+                value = "LauncherAppsService\$LauncherAppsImpl"
+            )
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
+            CompactInfoRow(
+                title = strings.versionTitle,
+                value = "v1.1.0 (AOSP & One UI 6.1 Multi-User)"
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+    }
+}
+
+@Composable
+private fun SettingsSectionCard(
+    title: String,
+    content: @Composable () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = title,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 4.dp, bottom = 4.dp)
+        )
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            tonalElevation = 2.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+            ) {
+                content()
             }
         }
+    }
+}
+
+@Composable
+private fun CompactSwitchRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onCheckedChange(!checked) }
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                text = subtitle,
+                fontSize = 11.sp,
+                lineHeight = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            modifier = Modifier
+                .scale(0.8f)
+                .height(28.dp)
+        )
+    }
+}
+
+@Composable
+private fun CompactActionRow(
+    title: String,
+    subtitle: String,
+    isDestructive: Boolean = false,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 6.dp)
+    ) {
+        Text(
+            text = title,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            color = if (isDestructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = subtitle,
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun CompactInfoRow(
+    title: String,
+    value: String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            fontSize = 12.5.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = value,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+private fun detectDefaultLauncher(context: Context): LauncherInfo? {
+    return try {
+        val pm = context.packageManager
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        val resolveInfo = pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+            ?: return null
+        val actInfo = resolveInfo.activityInfo ?: return null
+        val pkg = actInfo.packageName ?: return null
+        val label = resolveInfo.loadLabel(pm)?.toString() ?: pkg
+        val icon = drawableToImageBitmap(resolveInfo.loadIcon(pm), 96)
+        LauncherInfo(label = label, packageName = pkg, icon = icon)
+    } catch (_: Throwable) {
+        null
     }
 }
 
@@ -543,7 +1494,7 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
             }
 
             val iconBitmap = try {
-                drawableToImageBitmap(info.getBadgedIcon(0))
+                drawableToImageBitmap(info.getBadgedIcon(0), 96)
             } catch (_: Throwable) {
                 null
             }
@@ -582,7 +1533,7 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
             pkg
         }
         val iconBitmap = try {
-            drawableToImageBitmap(pm.getApplicationIcon(appInfo))
+            drawableToImageBitmap(pm.getApplicationIcon(appInfo), 96)
         } catch (_: Throwable) {
             null
         }
@@ -604,7 +1555,7 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
     )
 }
 
-private fun drawableToImageBitmap(drawable: Drawable?, sizePx: Int = 112): ImageBitmap? {
+private fun drawableToImageBitmap(drawable: Drawable?, sizePx: Int = 96): ImageBitmap? {
     if (drawable == null) return null
     return try {
         val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
@@ -652,4 +1603,105 @@ private fun detectIsXposedApp(appInfo: ApplicationInfo, pm: PackageManager): Boo
         }
     }
     return false
+}
+
+@Composable
+private fun HomeVectorIcon() {
+    val color = LocalContentColor.current
+    Canvas(modifier = Modifier.size(20.dp)) {
+        val w = size.width
+        val h = size.height
+        val path = Path().apply {
+            moveTo(w * 0.5f, h * 0.14f)
+            lineTo(w * 0.14f, h * 0.46f)
+            lineTo(w * 0.24f, h * 0.46f)
+            lineTo(w * 0.24f, h * 0.84f)
+            lineTo(w * 0.43f, h * 0.84f)
+            lineTo(w * 0.43f, h * 0.58f)
+            lineTo(w * 0.57f, h * 0.58f)
+            lineTo(w * 0.57f, h * 0.84f)
+            lineTo(w * 0.76f, h * 0.84f)
+            lineTo(w * 0.76f, h * 0.46f)
+            lineTo(w * 0.86f, h * 0.46f)
+            close()
+        }
+        drawPath(
+            path = path,
+            color = color,
+            style = Stroke(width = 1.9.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+        )
+    }
+}
+
+@Composable
+private fun AppsVectorIcon() {
+    val color = LocalContentColor.current
+    Canvas(modifier = Modifier.size(20.dp)) {
+        val w = size.width
+        val h = size.height
+        val boxSize = w * 0.30f
+        val r = CornerRadius(2.dp.toPx(), 2.dp.toPx())
+        val stroke = Stroke(width = 1.8.dp.toPx())
+        drawRoundRect(color = color, topLeft = Offset(w * 0.15f, h * 0.15f), size = Size(boxSize, boxSize), cornerRadius = r, style = stroke)
+        drawRoundRect(color = color, topLeft = Offset(w * 0.55f, h * 0.15f), size = Size(boxSize, boxSize), cornerRadius = r, style = stroke)
+        drawRoundRect(color = color, topLeft = Offset(w * 0.15f, h * 0.55f), size = Size(boxSize, boxSize), cornerRadius = r, style = stroke)
+        drawRoundRect(color = color, topLeft = Offset(w * 0.55f, h * 0.55f), size = Size(boxSize, boxSize), cornerRadius = r, style = stroke)
+    }
+}
+
+@Composable
+private fun SettingsVectorIcon() {
+    val color = LocalContentColor.current
+    Canvas(modifier = Modifier.size(20.dp)) {
+        val w = size.width
+        val h = size.height
+        val stroke = Stroke(width = 1.8.dp.toPx(), cap = StrokeCap.Round)
+        // 3 horizontal sliders
+        drawLine(color, Offset(w * 0.15f, h * 0.25f), Offset(w * 0.85f, h * 0.25f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+        drawCircle(color, radius = 2.4.dp.toPx(), center = Offset(w * 0.35f, h * 0.25f))
+        drawLine(color, Offset(w * 0.15f, h * 0.50f), Offset(w * 0.85f, h * 0.50f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+        drawCircle(color, radius = 2.4.dp.toPx(), center = Offset(w * 0.65f, h * 0.50f))
+        drawLine(color, Offset(w * 0.15f, h * 0.75f), Offset(w * 0.85f, h * 0.75f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+        drawCircle(color, radius = 2.4.dp.toPx(), center = Offset(w * 0.42f, h * 0.75f))
+    }
+}
+
+@Composable
+private fun RefreshVectorIcon() {
+    val color = LocalContentColor.current
+    Canvas(modifier = Modifier.size(18.dp)) {
+        val w = size.width
+        val h = size.height
+        drawArc(
+            color = color,
+            startAngle = 35f,
+            sweepAngle = 290f,
+            useCenter = false,
+            topLeft = Offset(w * 0.16f, h * 0.16f),
+            size = Size(w * 0.68f, h * 0.68f),
+            style = Stroke(width = 1.8.dp.toPx(), cap = StrokeCap.Round)
+        )
+    }
+}
+
+@Composable
+private fun SearchVectorIcon() {
+    val color = MaterialTheme.colorScheme.onSurfaceVariant
+    Canvas(modifier = Modifier.size(15.dp)) {
+        val w = size.width
+        val h = size.height
+        drawCircle(
+            color = color,
+            radius = w * 0.32f,
+            center = Offset(w * 0.42f, h * 0.42f),
+            style = Stroke(width = 1.6.dp.toPx())
+        )
+        drawLine(
+            color = color,
+            start = Offset(w * 0.65f, h * 0.65f),
+            end = Offset(w * 0.88f, h * 0.88f),
+            strokeWidth = 1.8.dp.toPx(),
+            cap = StrokeCap.Round
+        )
+    }
 }

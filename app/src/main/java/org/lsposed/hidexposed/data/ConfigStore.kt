@@ -29,6 +29,31 @@ object ConfigStore {
     var autoHideXposedModules: Boolean = true
         private set
 
+    @Volatile
+    var autoHideCloneModules: Boolean = true
+        private set
+
+    // UI Preferences
+    @Volatile
+    var appLanguage: String = "SYSTEM"
+        private set
+
+    @Volatile
+    var themeMode: String = "SYSTEM" // SYSTEM, DARK, LIGHT
+        private set
+
+    @Volatile
+    var amoledBlack: Boolean = false
+        private set
+
+    @Volatile
+    var dynamicColor: Boolean = true
+        private set
+
+    @Volatile
+    var showSystemApps: Boolean = false
+        private set
+
     private val whitelistedPackages: MutableSet<String> = ConcurrentHashMap.newKeySet<String>().apply {
         add(SELF_USER0_KEY)
     }
@@ -58,7 +83,14 @@ object ConfigStore {
         if (whitelistedPackages.contains(uKey) || whitelistedPackages.contains(packageName)) {
             return false
         }
-        return autoHideXposedModules && isDetectedXposedModule
+        if (!isDetectedXposedModule) {
+            return false
+        }
+        return if (userId == 0) {
+            autoHideXposedModules
+        } else {
+            autoHideXposedModules && autoHideCloneModules
+        }
     }
 
     fun getWhitelist(): Set<String> = whitelistedPackages.toSet()
@@ -72,6 +104,7 @@ object ConfigStore {
         return try {
             val json = JSONObject(payload)
             autoHideXposedModules = json.optBoolean("autoHide", true)
+            autoHideCloneModules = json.optBoolean("autoHideClone", true)
 
             val newWhitelist = mutableSetOf<String>()
             val wlArray = json.optJSONArray("whitelist")
@@ -121,6 +154,7 @@ object ConfigStore {
             if (!file.exists() || !file.canRead()) return
             val json = JSONObject(file.readText())
             autoHideXposedModules = json.optBoolean("autoHide", true)
+            autoHideCloneModules = json.optBoolean("autoHideClone", true)
 
             whitelistedPackages.clear()
             val wlArray = json.optJSONArray("whitelist")
@@ -149,6 +183,7 @@ object ConfigStore {
         try {
             val json = JSONObject().apply {
                 put("autoHide", autoHideXposedModules)
+                put("autoHideClone", autoHideCloneModules)
                 put("whitelist", JSONArray(whitelistedPackages.toList()))
                 put("blacklist", JSONArray(blacklistedPackages.toList()))
             }
@@ -162,8 +197,14 @@ object ConfigStore {
     fun loadUiPrefs(context: Context) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         autoHideXposedModules = prefs.getBoolean("autoHide", true)
+        autoHideCloneModules = prefs.getBoolean("autoHideClone", true)
+        appLanguage = prefs.getString("appLanguage", "SYSTEM") ?: "SYSTEM"
+        themeMode = prefs.getString("themeMode", "SYSTEM") ?: "SYSTEM"
+        amoledBlack = prefs.getBoolean("amoledBlack", false)
+        dynamicColor = prefs.getBoolean("dynamicColor", true)
+        showSystemApps = prefs.getBoolean("showSystemApps", false)
+
         val rawWl = prefs.getStringSet("whitelist", setOf(SELF_USER0_KEY)) ?: setOf(SELF_USER0_KEY)
-        // Migrate legacy unprefixed SELF_PACKAGE to 0:SELF_PACKAGE so User 10 duplicate is hidden by default
         val wl = rawWl.map { if (it == SELF_PACKAGE) SELF_USER0_KEY else it }.toSet()
         val bl = prefs.getStringSet("blacklist", emptySet()) ?: emptySet()
         whitelistedPackages.clear()
@@ -172,14 +213,38 @@ object ConfigStore {
         blacklistedPackages.addAll(bl)
     }
 
+    fun saveUiAppearancePrefs(
+        context: Context,
+        language: String = appLanguage,
+        theme: String = themeMode,
+        amoled: Boolean = amoledBlack,
+        dynamic: Boolean = dynamicColor,
+        showSystem: Boolean = showSystemApps
+    ) {
+        appLanguage = language
+        themeMode = theme
+        amoledBlack = amoled
+        dynamicColor = dynamic
+        showSystemApps = showSystem
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putString("appLanguage", language)
+            .putString("themeMode", theme)
+            .putBoolean("amoledBlack", amoled)
+            .putBoolean("dynamicColor", dynamic)
+            .putBoolean("showSystemApps", showSystem)
+            .apply()
+    }
+
     fun saveUiPrefsAndSync(
         context: Context,
         autoHide: Boolean,
+        autoHideClone: Boolean = autoHideCloneModules,
         whitelist: Set<String>,
         blacklist: Set<String>,
         changedPackages: List<String>
     ): Boolean {
         autoHideXposedModules = autoHide
+        autoHideCloneModules = autoHideClone
         whitelistedPackages.clear()
         whitelistedPackages.addAll(whitelist)
         blacklistedPackages.clear()
@@ -187,6 +252,7 @@ object ConfigStore {
 
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
             .putBoolean("autoHide", autoHide)
+            .putBoolean("autoHideClone", autoHideClone)
             .putStringSet("whitelist", whitelist)
             .putStringSet("blacklist", blacklist)
             .apply()
@@ -194,6 +260,7 @@ object ConfigStore {
         return try {
             val payload = JSONObject().apply {
                 put("autoHide", autoHide)
+                put("autoHideClone", autoHideClone)
                 put("whitelist", JSONArray(whitelist.toList()))
                 put("blacklist", JSONArray(blacklist.toList()))
                 put("changed", JSONArray(changedPackages))
@@ -205,6 +272,15 @@ object ConfigStore {
         } catch (_: Throwable) {
             false
         }
+    }
+
+    fun exportConfigJson(): String {
+        return JSONObject().apply {
+            put("autoHide", autoHideXposedModules)
+            put("autoHideClone", autoHideCloneModules)
+            put("whitelist", JSONArray(whitelistedPackages.toList()))
+            put("blacklist", JSONArray(blacklistedPackages.toList()))
+        }.toString(2)
     }
 
     fun pingSystemHook(context: Context): Boolean {
