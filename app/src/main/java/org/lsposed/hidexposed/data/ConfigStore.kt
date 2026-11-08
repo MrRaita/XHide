@@ -264,52 +264,19 @@ object ConfigStore {
             .apply()
 
         return try {
-            val wlPlain = whitelist.map { it.substringAfter(':', it) }.toSet()
-            val blPlain = blacklist.map { it.substringAfter(':', it) }.toSet()
-
-            val ipcWhitelist = LinkedHashSet<String>(whitelist)
-            for (pkg in wlPlain) {
-                if (!blPlain.contains(pkg)) {
-                    ipcWhitelist.add(pkg)
-                }
-            }
-
-            val ipcBlacklist = LinkedHashSet<String>(blacklist)
-            for (pkg in blPlain) {
-                if (!wlPlain.contains(pkg)) {
-                    ipcBlacklist.add(pkg)
-                }
-            }
-
             val cleanChanged = changedPackages.map { it.substringAfter(':', it) }.distinct()
 
             val payload = JSONObject().apply {
                 put("autoHide", autoHide)
                 put("autoHideClone", autoHideClone)
-                put("whitelist", JSONArray(ipcWhitelist.toList()))
-                put("blacklist", JSONArray(ipcBlacklist.toList()))
+                put("whitelist", JSONArray(whitelist.toList()))
+                put("blacklist", JSONArray(blacklist.toList()))
                 put("changed", JSONArray(cleanChanged))
             }.toString()
 
             val launcherApps = context.getSystemService(LauncherApps::class.java) ?: return false
-            val profiles = LinkedHashSet<android.os.UserHandle>()
-            profiles.add(Process.myUserHandle())
-            try {
-                launcherApps.profiles?.let { profiles.addAll(it) }
-            } catch (_: Throwable) {
-            }
-
-            var anyOk = false
-            for (profile in profiles) {
-                try {
-                    val res = launcherApps.getActivityList("$IPC_UPDATE_PREFIX$payload", profile)
-                    if (res != null && res.isNotEmpty()) {
-                        anyOk = true
-                    }
-                } catch (_: Throwable) {
-                }
-            }
-            anyOk
+            val res = launcherApps.getActivityList("$IPC_UPDATE_PREFIX$payload", Process.myUserHandle())
+            res != null && res.isNotEmpty()
         } catch (_: Throwable) {
             false
         }
