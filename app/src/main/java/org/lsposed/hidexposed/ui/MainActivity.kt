@@ -495,11 +495,11 @@ fun MainScreen(
                         out.flush()
                     }
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(context, strings.copiedToast, Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, strings.exportSuccessToast, Toast.LENGTH_SHORT).show()
                     }
                 } catch (_: Throwable) {
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(context, strings.importFailedToast, Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, strings.exportFailedToast, Toast.LENGTH_SHORT).show()
                     }
                 }
             }
