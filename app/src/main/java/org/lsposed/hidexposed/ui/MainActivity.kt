@@ -213,7 +213,8 @@ data class AppEntry(
     val label: String,
     val isXposedModule: Boolean,
     val isSystemApp: Boolean,
-    val lastUpdateTime: Long = 0L
+    val lastUpdateTime: Long = 0L,
+    val hasLauncherIcon: Boolean = true
 ) {
     val uniqueKey: String get() = ConfigStore.userKey(userId, packageName)
 }
@@ -402,6 +403,7 @@ fun MainScreen(
         autoHide: Boolean = autoHideModules,
         autoHideClone: Boolean = autoHideCloneModules
     ): Boolean {
+        if (!entry.hasLauncherIcon) return false
         val uKey = entry.uniqueKey
         return when {
             bl.contains(uKey) || bl.contains(entry.packageName) -> true
@@ -835,6 +837,7 @@ fun MainScreen(
                         availableUserIds = availableUserIds,
                         autoHideModules = autoHideModules,
                         autoHideCloneModules = autoHideCloneModules,
+                        showSystemApps = showSystemApps,
                         whitelist = whitelist,
                         blacklist = blacklist,
                         defaultLauncher = defaultLauncher,
@@ -982,6 +985,7 @@ private fun HomeTabScreen(
     availableUserIds: List<Int>,
     autoHideModules: Boolean,
     autoHideCloneModules: Boolean,
+    showSystemApps: Boolean,
     whitelist: Set<String>,
     blacklist: Set<String>,
     defaultLauncher: LauncherInfo?,
@@ -992,10 +996,12 @@ private fun HomeTabScreen(
     onRefreshLauncher: () -> Unit,
     onToggleAppHidden: (AppEntry, Boolean) -> Unit
 ) {
-    val hiddenApps = remember(apps, autoHideModules, autoHideCloneModules, whitelist, blacklist) {
-        apps.filter { isEntryHidden(it) }
+    val hiddenApps = remember(apps, showSystemApps, autoHideModules, autoHideCloneModules, whitelist, blacklist) {
+        apps.filter { isEntryHidden(it) && (showSystemApps || it.hasLauncherIcon) }
     }
-    val xposedCount = remember(apps) { apps.count { it.isXposedModule } }
+    val xposedCount = remember(apps, showSystemApps) {
+        apps.count { it.isXposedModule && (showSystemApps || it.hasLauncherIcon) }
+    }
     val context = LocalContext.current
 
     Column(
@@ -1376,10 +1382,10 @@ private fun AppsTabScreen(
         blacklist
     ) {
         apps.filter { app ->
-            val allowSystem = showSystemApps || !app.isSystemApp || app.isXposedModule || app.userId != 0
+            val allowSystem = showSystemApps || (!app.isSystemApp && app.hasLauncherIcon) || (app.userId != 0 && app.hasLauncherIcon)
             val matchesMode = when (val mode = filterMode) {
                 is FilterMode.AllApps -> allowSystem
-                is FilterMode.XposedOnly -> app.isXposedModule
+                is FilterMode.XposedOnly -> app.isXposedModule && allowSystem
                 is FilterMode.HiddenOnly -> isEntryHidden(app)
                 is FilterMode.ByUser -> app.userId == mode.userId && allowSystem
             }
@@ -1391,16 +1397,18 @@ private fun AppsTabScreen(
     }
 
     val allCount = remember(apps, showSystemApps) {
-        apps.count { showSystemApps || !it.isSystemApp || it.isXposedModule || it.userId != 0 }
+        apps.count { showSystemApps || (!it.isSystemApp && it.hasLauncherIcon) || (it.userId != 0 && it.hasLauncherIcon) }
     }
-    val xposedCount = remember(apps) { apps.count { it.isXposedModule } }
-    val hiddenCount = remember(apps, autoHideModules, autoHideCloneModules, whitelist, blacklist) {
-        apps.count { isEntryHidden(it) }
+    val xposedCount = remember(apps, showSystemApps) {
+        apps.count { it.isXposedModule && (showSystemApps || (!it.isSystemApp && it.hasLauncherIcon)) }
+    }
+    val hiddenCount = remember(apps, showSystemApps, autoHideModules, autoHideCloneModules, whitelist, blacklist) {
+        apps.count { isEntryHidden(it) && (showSystemApps || (!it.isSystemApp && it.hasLauncherIcon)) }
     }
     val userCounts = remember(apps, showSystemApps) {
         val map = mutableMapOf<Int, Int>()
         for (app in apps) {
-            if (showSystemApps || !app.isSystemApp || app.isXposedModule || app.userId != 0) {
+            if (showSystemApps || (!app.isSystemApp && app.hasLauncherIcon) || (app.userId != 0 && app.hasLauncherIcon)) {
                 map[app.userId] = (map[app.userId] ?: 0) + 1
             }
         }
@@ -1637,7 +1645,14 @@ private fun AppItemRow(
                             contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                         )
                     }
-                    if (entry.isSystemApp && !entry.isXposedModule) {
+                    if (!entry.hasLauncherIcon) {
+                        Spacer(modifier = Modifier.width(5.dp))
+                        MiniBadge(
+                            text = strings.badgeNoIcon,
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else if (entry.isSystemApp && !entry.isXposedModule) {
                         Spacer(modifier = Modifier.width(5.dp))
                         MiniBadge(
                             text = strings.badgeSystem,
@@ -2266,7 +2281,8 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
                 label = label,
                 isXposedModule = isXposed,
                 isSystemApp = isSystem,
-                lastUpdateTime = updateTime
+                lastUpdateTime = updateTime,
+                hasLauncherIcon = true
             )
         }
     }
@@ -2294,6 +2310,12 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
         val isSystem = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0 &&
             (appInfo.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0
 
+        val hasLauncherIntent = try {
+            pm.getLaunchIntentForPackage(pkg) != null
+        } catch (_: Throwable) {
+            false
+        }
+
         val label = try {
             pm.getApplicationLabel(appInfo).toString()
         } catch (_: Throwable) {
@@ -2306,13 +2328,15 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
             0L
         }
 
+        // Iconless / headless modules (pure hooks) are classified as system-level components
         entriesMap[key] = AppEntry(
             userId = 0,
             packageName = pkg,
             label = label,
             isXposedModule = true,
-            isSystemApp = isSystem,
-            lastUpdateTime = updateTime
+            isSystemApp = isSystem || !hasLauncherIntent,
+            lastUpdateTime = updateTime,
+            hasLauncherIcon = hasLauncherIntent
         )
     }
 
