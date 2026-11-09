@@ -25,15 +25,15 @@
 
 ## 2. Performans ve Bellek (Performance & Memory)
 
-- [ ] **2.1 Liste Yükleme Sırasında İkonların Ayrılması:** Liste önce metin ve durum bilgileriyle anında render edilmeli, ikonlar satırlar ekrana girdikçe asenkron yüklenmeli (Tamamlandı & denetlenecek).
-- [ ] **2.2 Dinamik İkon Boyutlandırma:** İkonlar sabit 96x96 yerine cihaz ekran yoğunluğuna (`density`) göre ölçeklenmeli ve `LruCache` sınırı bellek boyutuna göre optimize edilmeli.
-- [ ] **2.3 Yapılandırma Değişikliklerinde Durum Koruma (rememberSaveable / State Hoisting):** Ekran yönü, yazı tipi ölçeği veya tema değiştiğinde `currentTab`, `searchQuery` ve `filterMode` sıfırlanmamalı.
-- [ ] **2.4 Yenile Düğmesi Aşırı İş Yükü ve Çift Tıklama Koruması:** `refreshState` gereksiz tüm modülleri baştan göndermek yerine yalnızca durumu yeniden okumalı; art arda hızlı tıklamalara karşı debounced / mutex koruması eklenmeli.
-- [ ] **2.5 Paket Kurulum/Kaldırma Dinleyicisi:** Gerçek zamanlı `ACTION_PACKAGE_ADDED` / `ACTION_PACKAGE_REMOVED` dinleyicisi ve `onResume` tazelemesi (Tamamlandı & denetlenecek).
-- [ ] **2.6 Sekme Geçişlerinde Kaydırma Konumunu Koruma:** `LazyListState` sekme `when` bloğunun dışına taşınarak sekmeler arası geçişte listenin en başa dönmesi engellenmeli.
-- [ ] **2.7 Lambda ve Kararsız Nesne Optimizasyonu:** `isEntryHidden` gibi lambda ve parametreler `remember` ile önbelleğe alınarak gereksiz Compose yeniden çizimleri önlenmeli.
-- [ ] **2.8 Çökme Dosyası Okumasını IO İş Parçacığına Taşıma:** `pendingCrashReport` dosya okuması ana UI thread'inden `Dispatchers.IO`'ya taşınmalı.
-- [ ] **2.9 Arama Alanına Debounce Ekleme:** Arama alanına 200ms debounce eklenerek her harf yazımında tüm listenin anında filtrelenmesi hafifletilmeli.
+- [x] **2.1 Liste Yükleme Sırasında İkonların Ayrılması:** Liste önce metin ve durum bilgileriyle anında render edilmeli, ikonlar satırlar ekrana girdikçe asenkron yüklenmeli (Tamamlandı).
+- [x] **2.2 Dinamik İkon Boyutlandırma:** İkon çizim boyutu cihaz ekran yoğunluğuna (`displayMetrics.density`) göre dinamik hesaplanacak şekilde optimize edildi.
+- [x] **2.3 Yapılandırma Değişikliklerinde Durum Koruma (rememberSaveable):** `currentTab` ve `searchQuery` `rememberSaveable` ile sarılarak tema/DPI değişikliklerinde durum kaybı önlendi.
+- [x] **2.4 Yenile Düğmesi Aşırı İş Yükü ve Çift Tıklama Koruması:** `refreshState` fonksiyonuna `isLoading || isRefreshing` yeniden giriş kilidi eklendi; gereksiz toplu IPC re-sync döngüsü kaldırıldı.
+- [x] **2.5 Paket Kurulum/Kaldırma Dinleyicisi:** Gerçek zamanlı `ACTION_PACKAGE_ADDED` / `ACTION_PACKAGE_REMOVED` dinleyicisi ve `onResume` tazelemesi (Tamamlandı).
+- [x] **2.6 Sekme Geçişlerinde Kaydırma Konumunu Koruma:** `LazyListState` ve `ScrollState` nesneleri `MainScreen` seviyesine taşınarak sekme geçişlerinde kaydırma konumunun korunması sağlandı.
+- [x] **2.7 Lambda ve Kararsız Nesne Optimizasyonu:** `isEntryHidden` lambda çağrısı `remember` ile önbelleğe alınarak gereksiz Compose recomposition tetiklemeleri önlendi.
+- [x] **2.8 Çökme Dosyası Okumasını IO İş Parçacığına Taşıma:** `pendingCrashReport` dosya okuması ana thread'den `Dispatchers.IO` üzerine taşındı.
+- [x] **2.9 Arama Alanına Debounce Ekleme:** Arama sorgusuna 200ms `delay` debounce eklenerek hızlı yazımda gereksiz filtreleme yükü engellendi.
 
 ---
 

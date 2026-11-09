@@ -45,9 +45,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -82,6 +85,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -115,6 +119,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
@@ -181,7 +186,8 @@ private fun loadAppIcon(context: Context, packageName: String, userId: Int, last
             } catch (_: Throwable) {
                 null
             }
-        val bmp = drawableToImageBitmap(rawDrawable, 96)
+        val targetSizePx = (context.resources.displayMetrics.density * 44).roundToInt().coerceIn(96, 192)
+        val bmp = drawableToImageBitmap(rawDrawable, targetSizePx)
         if (bmp != null) {
             synchronized(appIconLruCache) {
                 appIconLruCache.put(key, bmp)
@@ -329,7 +335,7 @@ fun MainScreen(
     val scope = rememberCoroutineScope()
     val strings = remember(langCode, configuration) { Localization.resolveStrings(langCode) }
 
-    var currentTab by remember { mutableStateOf(MainTab.HOME) }
+    var currentTab by rememberSaveable { mutableStateOf(MainTab.HOME) }
     var isHookActive by remember { mutableStateOf<Boolean?>(null) }
     var autoHideModules by remember { mutableStateOf(ConfigStore.autoHideXposedModules) }
     var autoHideCloneModules by remember { mutableStateOf(ConfigStore.autoHideCloneModules) }
@@ -343,23 +349,37 @@ fun MainScreen(
     var isRefreshing by remember { mutableStateOf(false) }
     var showResetConfirmDialog by remember { mutableStateOf(false) }
     var pendingImport by remember { mutableStateOf<PendingImportConfig?>(null) }
-    var searchQuery by remember { mutableStateOf("") }
-    // Default filter mode is AllApps ("Tümü") as requested
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var debouncedQuery by rememberSaveable { mutableStateOf("") }
     var filterMode by remember { mutableStateOf<FilterMode>(FilterMode.AllApps) }
-    var pendingCrashReport by remember {
-        val hasCrashExtra = (context as? android.app.Activity)?.intent?.getBooleanExtra("has_crash_report", false) == true
-        val f = File(context.filesDir, "last_crash.txt")
-        mutableStateOf(
+
+    val homeScrollState = rememberScrollState()
+    val appsListState = rememberLazyListState()
+    val settingsScrollState = rememberScrollState()
+
+    LaunchedEffect(searchQuery) {
+        if (searchQuery.isEmpty()) {
+            debouncedQuery = ""
+        } else {
+            delay(200)
+            debouncedQuery = searchQuery
+        }
+    }
+
+    var pendingCrashReport by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            val f = File(context.filesDir, "last_crash.txt")
             if (f.exists() && f.length() <= 256 * 1024) {
                 try {
-                    f.readText()
+                    val report = f.readText()
+                    withContext(Dispatchers.Main) {
+                        pendingCrashReport = report
+                    }
                 } catch (_: Throwable) {
-                    null
                 }
-            } else {
-                null
             }
-        )
+        }
     }
 
     fun isEntryHidden(
@@ -410,6 +430,7 @@ fun MainScreen(
     }
 
     fun refreshState(showToastOnDone: Boolean = false) {
+        if (isLoading || isRefreshing) return
         scope.launch {
             if (apps.isEmpty()) isLoading = true
             else isRefreshing = true
@@ -423,25 +444,18 @@ fun MainScreen(
             isHookActive = active
             apps = loadedApps
             defaultLauncher = launcher
-            availableUserIds = loadedApps.map { it.userId }.distinct().sorted()
+
+            val userManager = context.getSystemService(UserManager::class.java)
+            val launcherApps = context.getSystemService(LauncherApps::class.java)
+            val sysUserIds = try {
+                val pmProfiles = launcherApps?.profiles ?: userManager?.userProfiles
+                pmProfiles?.map { getUserIdFromHandle(it, userManager) } ?: listOf(0)
+            } catch (_: Throwable) {
+                listOf(0)
+            }
+            availableUserIds = (loadedApps.map { it.userId } + sysUserIds).distinct().sorted()
 
             if (showToastOnDone) {
-                if (active) {
-                    withContext(Dispatchers.IO) {
-                        val affectedPkgs = loadedApps
-                            .filter { isEntryHidden(it) || it.isXposedModule }
-                            .map { it.packageName }
-                            .distinct()
-                        ConfigStore.saveUiPrefsAndSync(
-                            context = context,
-                            autoHide = autoHideModules,
-                            autoHideClone = autoHideCloneModules,
-                            whitelist = whitelist,
-                            blacklist = blacklist,
-                            changedPackages = affectedPkgs
-                        )
-                    }
-                }
                 Toast.makeText(context, strings.launcherRefreshedToast, Toast.LENGTH_SHORT).show()
             }
             isLoading = false
@@ -852,6 +866,10 @@ fun MainScreen(
                     CircularProgressIndicator(modifier = Modifier.size(32.dp), strokeWidth = 3.dp)
                 }
             } else {
+                val isHiddenPredicate = remember(whitelist, blacklist, autoHideModules, autoHideCloneModules) {
+                    { entry: AppEntry -> isEntryHidden(entry, whitelist, blacklist, autoHideModules, autoHideCloneModules) }
+                }
+
                 when (currentTab) {
                     MainTab.HOME -> HomeTabScreen(
                         strings = strings,
@@ -863,7 +881,8 @@ fun MainScreen(
                         whitelist = whitelist,
                         blacklist = blacklist,
                         defaultLauncher = defaultLauncher,
-                        isEntryHidden = { isEntryHidden(it, whitelist, blacklist, autoHideModules, autoHideCloneModules) },
+                        isEntryHidden = isHiddenPredicate,
+                        scrollState = homeScrollState,
                         onOpenAppsFilter = { mode ->
                             filterMode = mode
                             currentTab = MainTab.APPS
@@ -894,10 +913,12 @@ fun MainScreen(
                             whitelist = whitelist,
                             blacklist = blacklist,
                             searchQuery = searchQuery,
+                            debouncedQuery = debouncedQuery,
                             onSearchChange = { searchQuery = it },
                             filterMode = filterMode,
                             onFilterModeChange = { filterMode = it },
-                            isEntryHidden = { isEntryHidden(it, whitelist, blacklist, autoHideModules, autoHideCloneModules) },
+                            isEntryHidden = isHiddenPredicate,
+                            listState = appsListState,
                             onToggleAppHidden = { entry, hide ->
                                 updateAppHidden(entry, hide)
                             }
@@ -919,6 +940,7 @@ fun MainScreen(
                         showSystemApps = showSystemApps,
                         isSelfHidden = !whitelist.contains(ConfigStore.SELF_USER0_KEY) &&
                             (autoHideModules || blacklist.contains(ConfigStore.SELF_USER0_KEY)),
+                        scrollState = settingsScrollState,
                         onToggleAutoHide = { checked ->
                             val prevAutoHide = autoHideModules
                             autoHideModules = checked
@@ -998,6 +1020,7 @@ private fun HomeTabScreen(
     blacklist: Set<String>,
     defaultLauncher: LauncherInfo?,
     isEntryHidden: (AppEntry) -> Boolean,
+    scrollState: ScrollState,
     onOpenAppsFilter: (FilterMode) -> Unit,
     onOpenSettings: () -> Unit,
     onRefreshLauncher: () -> Unit,
@@ -1012,7 +1035,7 @@ private fun HomeTabScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
@@ -1361,15 +1384,17 @@ private fun AppsTabScreen(
     whitelist: Set<String>,
     blacklist: Set<String>,
     searchQuery: String,
+    debouncedQuery: String,
     onSearchChange: (String) -> Unit,
     filterMode: FilterMode,
     onFilterModeChange: (FilterMode) -> Unit,
     isEntryHidden: (AppEntry) -> Boolean,
+    listState: LazyListState,
     onToggleAppHidden: (AppEntry, Boolean) -> Unit
 ) {
     val filteredApps = remember(
         apps,
-        searchQuery,
+        debouncedQuery,
         filterMode,
         showSystemApps,
         autoHideModules,
@@ -1385,9 +1410,9 @@ private fun AppsTabScreen(
                 is FilterMode.HiddenOnly -> isEntryHidden(app)
                 is FilterMode.ByUser -> app.userId == mode.userId && allowSystem
             }
-            val matchesQuery = searchQuery.isBlank() ||
-                app.label.contains(searchQuery, ignoreCase = true) ||
-                app.packageName.contains(searchQuery, ignoreCase = true)
+            val matchesQuery = debouncedQuery.isBlank() ||
+                app.label.contains(debouncedQuery, ignoreCase = true) ||
+                app.packageName.contains(debouncedQuery, ignoreCase = true)
             matchesMode && matchesQuery
         }
     }
@@ -1511,6 +1536,7 @@ private fun AppsTabScreen(
             }
         } else {
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -1687,6 +1713,7 @@ private fun SettingsTabScreen(
     onUpdateAppearance: (String, String, Boolean, Boolean, Float) -> Unit,
     onRequestExportFile: () -> Unit,
     onRequestImportFile: () -> Unit,
+    scrollState: ScrollState,
     onResetAll: () -> Unit
 ) {
     val systemDark = isSystemInDarkTheme()
@@ -1701,7 +1728,7 @@ private fun SettingsTabScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
             .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
