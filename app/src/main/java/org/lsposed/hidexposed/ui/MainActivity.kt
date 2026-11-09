@@ -118,6 +118,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
+import org.lsposed.hidexposed.BuildConfig
 import org.lsposed.hidexposed.core.AppDiagnostics
 import org.lsposed.hidexposed.core.ModuleCache
 import org.lsposed.hidexposed.data.ConfigStore
@@ -1074,7 +1075,7 @@ private fun HomeTabScreen(
                 modifier = Modifier.weight(1f),
                 title = strings.statXposedModules,
                 value = xposedCount.toString(),
-                subtitle = "APK / Manifest / API 100",
+                subtitle = strings.statXposedSubtitle,
                 onClick = { onOpenAppsFilter(FilterMode.XposedOnly) }
             )
         }
@@ -1876,7 +1877,7 @@ private fun SettingsTabScreen(
         SettingsSectionCard(title = strings.sectionAbout) {
             CompactInfoRow(
                 title = strings.protectedManagersTitle,
-                value = "Vector · LSPosed · KernelSU · Magisk"
+                value = "Vector · LSPosed · KernelSU · KSU Next · Magisk · APatch · LSPatch · EdXposed"
             )
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
             CompactInfoRow(
@@ -1886,7 +1887,7 @@ private fun SettingsTabScreen(
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
             CompactInfoRow(
                 title = strings.versionTitle,
-                value = "v1.0.3 (Android 11–17 Multi-User)"
+                value = "v${BuildConfig.VERSION_NAME} (Android 11–17 Multi-User)"
             )
         }
 

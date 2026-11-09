@@ -12,9 +12,9 @@
 - [x] **1.3 Dışa Aktarma / Kopyalama Tost Mesajı Düzeltmesi:** Dışa aktarma hatasında `importFailedToast` gösterilme hatası düzeltildi; `exportSuccessToast` ve `exportFailedToast` doğru bağlamlarla yerelleştirildi.
 - [x] **1.4 Sıfırlama ve İçe Aktarma Onay Diyalogları:** `onResetAll` ve yedekten içe aktarma işlemleri kullanıcıdan teyit alan onay diyaloglarına (`AlertDialog`) bağlandı; içe aktarmada geçerli ve atlanan geçersiz kural sayıları önizlenerek onay alındı.
 - [x] **1.5 Başlangıçta Kırmızı "INACTIVE" Yanıp Sönmesi:** `isHookActive` başlangıç değeri `Boolean?` (null) yapılarak ilk ping tamamlanana kadar nötr/denetleniyor durumu (`badgeChecking`, `hookCheckingTitle`) gösterildi; kırmızı rozetin açılışta anlık yanıp sönmesi engellendi ve rozet metinleri yerelleştirildi.
-- [ ] **1.6 Dinamik Sürüm Bilgisi:** Ayarlar ekranındaki sabit `"v1.0.2"` metni yerine `BuildConfig.VERSION_NAME` kullanılmalı.
-- [ ] **1.7 Ana Sayfa Modül Kartı Metni:** "APK / Manifest / API 100" yerine modern modül tespit mimarisine ("Modern LibXposed & Manifest Meta-Data") uygun güncel açıklama yazılmalı.
-- [ ] **1.8 Korunan Yöneticiler Listesi Senkronizasyonu:** Ayarlardaki sabit metin `KNOWN_MANAGERS` içeriğindeki tüm yöneticileri yansıtmalı (Vector, LSPosed, KernelSU, Magisk, EdXposed, LSPatch, KSU Next, APatch).
+- [x] **1.6 Dinamik Sürüm Bilgisi:** Ayarlar ekranındaki sabit `"v1.0.2"` / `"v1.0.3"` metni yerine `BuildConfig.VERSION_NAME` dinamik sürüm bilgisi bağlandı.
+- [x] **1.7 Ana Sayfa Modül Kartı Metni:** "APK / Manifest / API 100" yerine modern modül tespit mimarisine uygun güncel "LibXposed & Manifest" açıklaması yerelleştirildi.
+- [x] **1.8 Korunan Yöneticiler Listesi Senkronizasyonu:** Ayarlardaki liste `KNOWN_MANAGERS` içeriğindeki tüm yöneticilerle senkronize edildi (Vector, LSPosed, KernelSU, KSU Next, Magisk, APatch, LSPatch, EdXposed).
 - [ ] **1.9 Sistem Çubuğu Renkleri ve Dinamik Edge-to-Edge:** Uygulama içi tema değiştirildiğinde (Açık/Koyu/AMOLED) `enableEdgeToEdge()` dinamik `SystemBarStyle` ile çağrılarak durum çubuğu ve navigasyon çubuğu ikonlarının okunabilirliği garanti edilmeli.
 - [ ] **1.10 Başlangıç Penceresi (Window Preview Theme):** Manifestteki sabit koyu pencere teması yerine sistem temasına uyumlu veya adaptif tema tanımlanmalı.
 - [ ] **1.11 Profil Listesi Hata Bildirimi:** Kilitli Private Space veya duraklatılmış profiller sorgulanamadığında hata sessizce yutulmamalı, kullanıcıya bilgi verilmeli.
