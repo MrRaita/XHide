@@ -28,3 +28,7 @@ Comprehensive code optimizations, security enhancements, accessibility fixes, an
 * Configuration Preview: Added confirmation dialogs with valid rule and invalid key counters before importing or resetting configurations.
 * Interface Streamlining: Replaced cluttered top app bar with native One UI large typography headers across Home, Apps, and Settings tabs; moved manual refresh to the Apps search bar alongside existing pull-to-refresh.
 * Responsive Information Layout: Refactored CompactInfoRow from horizontal Row to vertical Column to prevent text squeezing on long values.
+
+---
+
+**Full Changelog**: https://github.com/everyoneexe/XHide/compare/v1.0.3...v1.0.4
