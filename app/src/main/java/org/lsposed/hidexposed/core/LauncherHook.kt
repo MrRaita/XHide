@@ -976,12 +976,19 @@ object LauncherHook {
             val listeners = XposedHelpers.getObjectField(launcherAppsImpl, "mListeners") as? RemoteCallbackList<*> ?: return
             val count = listeners.beginBroadcast()
             val userId = getUserId(profile)
+            val context = getContextFromImpl(launcherAppsImpl)
             try {
                 val (hiddenPkgs, unhiddenPkgs) = changedPackages.partition { pkg ->
+                    val isModule = ModuleCache.isXposedModule(
+                        packageName = pkg,
+                        appInfo = null,
+                        context = context,
+                        userHandle = profile
+                    )
                     ConfigStore.shouldHidePackage(
                         packageName = pkg,
                         userId = userId,
-                        isDetectedXposedModule = true
+                        isDetectedXposedModule = isModule
                     )
                 }
 
@@ -1018,6 +1025,10 @@ object LauncherHook {
                         for (pkg in unhiddenPkgs) {
                             try {
                                 XposedHelpers.callMethod(listener, "onPackageAdded", profile, pkg)
+                            } catch (_: Throwable) {
+                            }
+                            try {
+                                XposedHelpers.callMethod(listener, "onPackageChanged", profile, pkg)
                             } catch (_: Throwable) {
                             }
                         }
