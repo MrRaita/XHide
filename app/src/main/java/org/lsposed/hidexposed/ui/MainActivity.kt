@@ -459,6 +459,8 @@ fun MainScreen(
                 if (apps.isEmpty()) isLoading = true
                 else isRefreshing = true
 
+                val startTime = System.currentTimeMillis()
+
                 val (active, loadedApps, launcher) = withContext(Dispatchers.IO) {
                     val activeDef = async { ConfigStore.pingSystemHook(context) }
                     val loadedAppsDef = async { loadInstalledAppsAcrossProfiles(context) }
@@ -478,6 +480,14 @@ fun MainScreen(
                     listOf(0)
                 }
                 availableUserIds = (loadedApps.map { it.userId } + sysUserIds).distinct().sorted()
+
+                if (isRefreshing) {
+                    val elapsed = System.currentTimeMillis() - startTime
+                    val minDurationMs = 1200L
+                    if (elapsed < minDurationMs) {
+                        delay(minDurationMs - elapsed)
+                    }
+                }
 
                 if (showToastOnDone) {
                     Toast.makeText(context, strings.launcherRefreshedToast, Toast.LENGTH_SHORT).show()
@@ -2501,7 +2511,7 @@ private fun RefreshVectorIcon(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 800, easing = LinearEasing),
+            animation = tween(durationMillis = 600, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "refresh_angle"
