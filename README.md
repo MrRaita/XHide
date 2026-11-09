@@ -17,7 +17,7 @@ By intercepting launcher queries at `LauncherAppsService`, XHide removes icons f
   - Material 3 interface with per-profile filtering tabs (`User 0`, `User 10`, etc.).
   - Smart package filtering: Headless hook modules without launcher icons are organized under system components to keep the main list clean.
   - Backup and restore configuration via Storage Access Framework (SAF).
-  - Dynamic Material You colors, AMOLED dark theme, and fine-grained UI scaling (90%–115%).
+  - Dynamic Material You colors, AMOLED dark theme, and fine-grained UI scaling (90%–150%).
   - Multi-language support: English, Turkish, German, Russian, and Simplified Chinese.
 
 ---

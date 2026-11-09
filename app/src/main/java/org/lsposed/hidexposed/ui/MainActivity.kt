@@ -1928,7 +1928,7 @@ private fun SettingsTabScreen(
                         onValueChangeFinished = {
                             onUpdateAppearance(langCode, themeMode, amoledBlack, dynamicColor, localUiScale)
                         },
-                        valueRange = 0.90f..1.15f,
+                        valueRange = 0.90f..1.50f,
                         modifier = Modifier.weight(1f)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
