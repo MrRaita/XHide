@@ -74,7 +74,7 @@ object ConfigStore {
         private set
 
     @Volatile
-    var amoledBlack: Boolean = false
+    var amoledBlack: Boolean = true
         private set
 
     @Volatile
@@ -279,7 +279,7 @@ object ConfigStore {
         autoHideCloneModules = prefs.getBoolean("autoHideClone", true)
         appLanguage = prefs.getString("appLanguage", "SYSTEM") ?: "SYSTEM"
         themeMode = prefs.getString("themeMode", "SYSTEM") ?: "SYSTEM"
-        amoledBlack = prefs.getBoolean("amoledBlack", false)
+        amoledBlack = prefs.getBoolean("amoledBlack", true)
         dynamicColor = prefs.getBoolean("dynamicColor", true)
         showSystemApps = prefs.getBoolean("showSystemApps", true)
         uiScale = prefs.getFloat("uiScale", 1.0f).coerceIn(0.90f, 1.50f)

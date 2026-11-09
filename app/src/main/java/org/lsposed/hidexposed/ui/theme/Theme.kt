@@ -17,7 +17,7 @@ private val DefaultLightScheme = lightColorScheme()
 @Composable
 fun HideXposedTheme(
     themeMode: String = "SYSTEM",
-    amoledBlack: Boolean = false,
+    amoledBlack: Boolean = true,
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
