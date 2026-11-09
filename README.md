@@ -1,86 +1,74 @@
 # XHide
 
-**XHide** is a lightweight, zero-lock, system-level **Xposed / LSPosed / Vector** module that cleanly hides Xposed module icons and user-selected applications from all Android launchers (home screen, app drawer, and search) across all user profiles while keeping them **100% accessible** inside Xposed and Root managers.
+XHide is an Xposed module that hides launcher icons for Xposed modules and user-selected applications on Android 11 through Android 15+.
+
+By intercepting launcher queries at `LauncherAppsService`, XHide removes icons from home screens, app drawers, and launcher search results while keeping applications intact, fully functional, and accessible through framework managers and system settings.
 
 ---
 
-## Key Features
+## Features
 
-- **Zero-Lock System Architecture:**
-  Hooks `com.android.server.pm.LauncherAppsService$LauncherAppsImpl` and `com.android.server.pm.UserManagerService` at the binder boundary instead of `PackageManagerService`. This completely eliminates `PackageManagerService` lock contention, boot deadlocks, and `ActivityNotFoundException` crashes when launching module settings.
-- **Launcher-Focused Scope:**
-  Specifically targets launcher visibility (`LauncherAppsService`). Filters app drawer activities, pinned launcher shortcuts, and launcher queries across all profiles without modifying low-level `PackageManager.getInstalledPackages` system queries.
-- **Lock-Free Atomic Concurrency:**
-  Config rules are swapped atomically using `@Volatile` immutable sets, guaranteeing zero race conditions between concurrent Binder threads and companion UI sync.
-- **Complete Launcher Filtering Coverage:**
-  Intercepts `getLauncherActivities`, `resolveLauncherActivityInternal` (Android 12–17), `resolveActivity` (Android 11), and `isActivityEnabled` (Android 11–17) so both app drawer entries and workspace items are cleanly filtered.
-- **True Per-User & Multi-Profile Isolation:**
-  Visibility rules are keyed by `userId:packageName`. Hiding or unhiding an application in `User 0` (Owner) never affects `User 10` (Work Profile / Clone Profile), MIUI `999` (Dual Apps), Samsung `150` (Secure Folder), Android 15–17 Private Space, or Secondary Users, and vice versa.
-- **Universal 3-Tier Xposed Module Detector (O(1) Cache):**
-  Automatically detects modules across base and split APKs with negative cache poisoning protection:
-  - **Tier 1 (Manifest Meta-Data):** `xposedmodule`, `xposedminversion`, `xposeddescription`, `xposedscope`, `libxposed`, `libxposed_minversion`, `libxposed_api`, `libxposed_scope`
-  - **Tier 2 (Classic Xposed API):** Fast APK zip central directory inspection for `assets/xposed_init`
-  - **Tier 3 (Modern LibXposed API 100):** Fast APK zip central directory inspection for `META-INF/xposed/module.prop`
-  > **Note on Detection & Framework Managers:** Detection relies on standard Xposed manifest meta-data and asset markers. If a third-party application, framework manager, or fork declares these metadata entries, it may be recognized as an Xposed module and automatically hidden when *Auto-Hide Xposed Modules* is active. Users always retain full manual control: explicitly toggling any application off in the XHide companion app immediately whitelists it, overriding automated detection rules.
-- **Caller-Aware Core System Bypass & Cached AppId:**
-  Queries originating from `android` (system_server) or `XHide` itself are never filtered. Caller AppId is cached in memory to ensure instantaneous O(1) integer verification without repeated PackageManager IPC.
-- **Batch Live Launcher Synchronization:**
-  Toggling any rule triggers `MyPackageMonitor.onPackageChanged` with batched `IOnAppsChangedListener` callbacks across all user profiles, eliminating broadcast storms.
-- **Fail-Safe Crash Protection & Secure Diagnostics:**
-  Includes a global uncaught exception handler with infinite restart loop protection and a 1-tap GitHub Issue diagnostics reporter with Android 13+ sensitive clipboard protection (`ClipDescription.EXTRA_IS_SENSITIVE`).
-- **Material 3 Companion UI:**
-  - Clean 3-tab portrait interface (`Home`, `Apps`, `Settings`) with per-user filter chips (`User 0`, `User 10`, etc.).
-  - Multi-language support: System Default, **English**, **Türkçe**, **Deutsch**, **Русский**, and **简体中文**.
-  - Dynamic Material You colors and AMOLED Pure Black (`#000000`) theme mode.
-  - Fine-grained UI / DPI scaling slider (90%..115%) with 1% steps.
-  - JSON configuration backup export and import via Android Storage Access Framework (SAF).
+- **Launcher-Level Icon Hiding:** Filters launcher activity queries (`LauncherAppsService`) without modifying low-level package manager states or breaking system integrations.
+- **Automatic Module Detection:** Identifies installed Xposed modules across base and split APKs using standard manifest metadata (`xposedmodule`, `libxposed`) and package assets (`assets/xposed_init`, `META-INF/xposed/module.prop`).
+- **Manual Control & Overrides:** Any installed application can be manually hidden or unhidden. User-defined rules always take precedence over automatic module detection.
+- **Multi-Profile Support:** Manages visibility rules independently across user profiles, including Work Profiles, Clone/Dual Apps, Secure Folder, and Android 15+ Private Space.
+- **Immediate Launcher Updates:** Notifies active launchers via system package callbacks when visibility toggles change, applying changes without requiring a device or launcher restart.
+- **Companion Application:**
+  - Material 3 interface with per-profile filtering tabs.
+  - Backup and restore settings via Storage Access Framework (SAF).
+  - Dynamic color support and AMOLED dark theme.
+  - Multi-language support: English, Turkish, German, Russian, and Simplified Chinese.
 
 ---
 
-## Android 11 – 17 Compatibility
+## Note on Module Detection
 
-Audited against AOSP source branches (`android11-release` through `main`) and HMA multi-user architecture:
+Automatic hiding detects modules based on conventional Xposed manifest metadata and archive markers. If an application or custom framework manager includes these metadata tags, it may be recognized as an Xposed module.
 
-| Android Version | SDK | Hook & Profile Coverage |
-| :--- | :---: | :--- |
-| **Android 11 (R)** | 30 | `ParceledListSlice<ResolveInfo>`, `resolveActivity`, `ensureInUserProfiles`, `canAccessProfile`, `UserManagerService.getProfileIds`, `mListeners` broadcast fallback |
-| **Android 12 / 12L (S)** | 31–32 | `ParceledListSlice<LauncherActivityInfoInternal>`, `resolveLauncherActivityInternal`, `ensureInUserProfiles`, `canAccessProfile`, `UserManagerService.getProfileIds` |
-| **Android 13 (T)** | 33 | `LauncherActivityInfoInternal`, `resolveLauncherActivityInternal`, `canAccessProfile`, `MyPackageMonitor.onPackageChanged`, `UserManagerService.getProfileIds` |
-| **Android 14 (U)** | 34 | `LauncherActivityInfoInternal`, `resolveLauncherActivityInternal`, `canAccessProfile`, `MyPackageMonitor.onPackageChanged`, `UserManagerService.getProfileIds` |
-| **Android 15 (V)** | 35 | `canAccessProfile` (2-arg & 5-arg), `canAccessHiddenProfile` (Private Space), `getUserProfiles`, `UserManagerService.getProfileIds` |
-| **Android 16 (W)** | 36 | `canAccessProfile` (2-arg & 5-arg), `canAccessHiddenProfile`, `isActivityEnabled`, Clone / Work / Private Space profiles |
-| **Android 17** | 37+ | Full parity with AOSP `main` `LauncherAppsService$LauncherAppsImpl` and `UserManagerService` signatures |
+If you want any detected module or manager icon to remain visible on your launcher, simply toggle it off in the **Apps** tab. Explicit user preferences are whitelisted and always override automatic detection.
+
+---
+
+## Compatibility
+
+- **Android Versions:** Android 11 (API 30) through Android 15 / 16 (API 35–36).
+- **Frameworks:** LSPosed, Vector, and compatible ART hook runtimes.
+- **Scope:** Requires scoping to `System Framework` (`android`).
 
 ---
 
 ## Installation
 
-1. Download **`XHide-v1.0.2-release.apk`** from the [Releases](https://github.com/everyoneexe/XHide/releases/latest) page and install it.
-2. Open **LSPosed** or **Vector Manager**, enable **XHide**, and ensure **`System Framework` (`android`)** is selected in the module scope.
-3. Reboot your device (or soft-restart `system_server`) once to activate the system hook.
-4. Open **XHide** to configure automatic module hiding or toggle visibility for individual applications across any user profile in real time.
+1. Download the latest release APK from [Releases](https://github.com/everyoneexe/XHide/releases).
+2. Install the APK on your device.
+3. Open your Xposed manager (e.g. LSPosed or Vector), enable **XHide**, and ensure **System Framework (`android`)** is selected in the scope.
+4. Reboot your device or restart `system_server`.
+5. Open XHide to configure rules or toggle application visibility.
 
 ---
 
 ## Building from Source
 
+Prerequisites: JDK 17+ and the Android SDK.
+
 ```bash
 git clone https://github.com/everyoneexe/XHide.git
 cd XHide
-./gradlew test assembleRelease assembleDebug
+./gradlew assembleRelease assembleDebug
 ```
 
-- **Release APK:** `app/build/outputs/apk/release/app-release.apk`
-- **Debug APK:** `app/build/outputs/apk/debug/app-debug.apk`
+Output APKs:
+- Release: `app/build/outputs/apk/release/app-release.apk`
+- Debug: `app/build/outputs/apk/debug/app-debug.apk`
 
 ---
 
-## Acknowledgements & Special Thanks
+## Acknowledgements
 
-- **[@MrRaita](https://github.com/MrRaita)** — For conducting a comprehensive static code review on v1.0.3, identifying concurrency race conditions in `ConfigStore`, Binder payload safety thresholds, hook isolation opportunities, and hardening security vectors across the codebase.
+- **[@MrRaita](https://github.com/MrRaita)** — For valuable static code review feedback, bug reports, and suggestions that helped improve concurrency safety and hook reliability.
 
 ---
 
 ## License
 
-Released under the [MIT License](LICENSE).
+This project is licensed under the [MIT License](LICENSE).
