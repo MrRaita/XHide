@@ -11,7 +11,7 @@
 - [x] **1.2 Senkronizasyon Sıralama & Yarış Durumu (Mutex/Queue):** Hızlı switch geçişlerinde eşzamanlı coroutine'lerin sırasının bozulmasını önlemek için coroutine senkronizasyon kuyruğu (`Mutex.withLock`) uygulandı.
 - [x] **1.3 Dışa Aktarma / Kopyalama Tost Mesajı Düzeltmesi:** Dışa aktarma hatasında `importFailedToast` gösterilme hatası düzeltildi; `exportSuccessToast` ve `exportFailedToast` doğru bağlamlarla yerelleştirildi.
 - [x] **1.4 Sıfırlama ve İçe Aktarma Onay Diyalogları:** `onResetAll` ve yedekten içe aktarma işlemleri kullanıcıdan teyit alan onay diyaloglarına (`AlertDialog`) bağlandı; içe aktarmada geçerli ve atlanan geçersiz kural sayıları önizlenerek onay alındı.
-- [ ] **1.5 Başlangıçta Kırmızı "INACTIVE" Yanıp Sönmesi:** `isHookActive` başlangıç değeri `null` yapılarak ilk ping tamamlanana kadar nötr/yükleniyor durumu gösterilmeli, kırmızı rozet anlık parlamamalı.
+- [x] **1.5 Başlangıçta Kırmızı "INACTIVE" Yanıp Sönmesi:** `isHookActive` başlangıç değeri `Boolean?` (null) yapılarak ilk ping tamamlanana kadar nötr/denetleniyor durumu (`badgeChecking`, `hookCheckingTitle`) gösterildi; kırmızı rozetin açılışta anlık yanıp sönmesi engellendi ve rozet metinleri yerelleştirildi.
 - [ ] **1.6 Dinamik Sürüm Bilgisi:** Ayarlar ekranındaki sabit `"v1.0.2"` metni yerine `BuildConfig.VERSION_NAME` kullanılmalı.
 - [ ] **1.7 Ana Sayfa Modül Kartı Metni:** "APK / Manifest / API 100" yerine modern modül tespit mimarisine ("Modern LibXposed & Manifest Meta-Data") uygun güncel açıklama yazılmalı.
 - [ ] **1.8 Korunan Yöneticiler Listesi Senkronizasyonu:** Ayarlardaki sabit metin `KNOWN_MANAGERS` içeriğindeki tüm yöneticileri yansıtmalı (Vector, LSPosed, KernelSU, Magisk, EdXposed, LSPatch, KSU Next, APatch).

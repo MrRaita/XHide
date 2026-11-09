@@ -296,7 +296,7 @@ fun MainScreen(
     val strings = remember(langCode) { Localization.resolveStrings(langCode) }
 
     var currentTab by remember { mutableStateOf(MainTab.HOME) }
-    var isHookActive by remember { mutableStateOf(false) }
+    var isHookActive by remember { mutableStateOf<Boolean?>(null) }
     var autoHideModules by remember { mutableStateOf(ConfigStore.autoHideXposedModules) }
     var autoHideCloneModules by remember { mutableStateOf(ConfigStore.autoHideCloneModules) }
     var showSystemApps by remember { mutableStateOf(ConfigStore.showSystemApps) }
@@ -697,7 +697,7 @@ fun MainScreen(
                         pendingCrashReport = null
                         AppDiagnostics.openGitHubIssue(
                             context = context,
-                            isHookActive = isHookActive,
+                            isHookActive = isHookActive == true,
                             userNotes = report
                         )
                     }
@@ -741,15 +741,32 @@ fun MainScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.width(8.dp))
+                    val (badgeText, badgeBg, badgeFg) = when (isHookActive) {
+                        true -> Triple(
+                            strings.badgeActive,
+                            MaterialTheme.colorScheme.primaryContainer,
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        false -> Triple(
+                            strings.badgeInactive,
+                            MaterialTheme.colorScheme.errorContainer,
+                            MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        null -> Triple(
+                            strings.badgeChecking,
+                            MaterialTheme.colorScheme.surfaceVariant,
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     Surface(
-                        color = if (isHookActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer,
+                        color = badgeBg,
                         shape = RoundedCornerShape(6.dp)
                     ) {
                         Text(
-                            text = if (isHookActive) "ACTIVE" else "INACTIVE",
+                            text = badgeText,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (isHookActive) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
+                            color = badgeFg,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
                     }
@@ -938,7 +955,7 @@ fun MainScreen(
 @Composable
 private fun HomeTabScreen(
     strings: AppStrings,
-    isHookActive: Boolean,
+    isHookActive: Boolean?,
     apps: List<AppEntry>,
     availableUserIds: List<Int>,
     autoHideModules: Boolean,
@@ -965,17 +982,32 @@ private fun HomeTabScreen(
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        val cardBg = when (isHookActive) {
+            true -> MaterialTheme.colorScheme.primaryContainer
+            false -> MaterialTheme.colorScheme.errorContainer
+            null -> MaterialTheme.colorScheme.surfaceVariant
+        }
+        val dotColor = when (isHookActive) {
+            true -> MaterialTheme.colorScheme.primary
+            false -> MaterialTheme.colorScheme.error
+            null -> MaterialTheme.colorScheme.outline
+        }
+        val statusTitle = when (isHookActive) {
+            true -> strings.hookActiveTitle
+            false -> strings.hookInactiveTitle
+            null -> strings.hookCheckingTitle
+        }
+        val statusDesc = when (isHookActive) {
+            true -> strings.hookActiveDesc
+            false -> strings.hookInactiveDesc
+            null -> strings.hookCheckingDesc
+        }
+
         // 1. Compact Status Card
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = if (isHookActive) {
-                    MaterialTheme.colorScheme.primaryContainer
-                } else {
-                    MaterialTheme.colorScheme.errorContainer
-                }
-            )
+            colors = CardDefaults.cardColors(containerColor = cardBg)
         ) {
             Column(
                 modifier = Modifier
@@ -987,14 +1019,11 @@ private fun HomeTabScreen(
                         modifier = Modifier
                             .size(9.dp)
                             .clip(CircleShape)
-                            .background(
-                                if (isHookActive) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.error
-                            )
+                            .background(dotColor)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (isHookActive) strings.hookActiveTitle else strings.hookInactiveTitle,
+                        text = statusTitle,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -1007,11 +1036,11 @@ private fun HomeTabScreen(
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = if (isHookActive) strings.hookActiveDesc else strings.hookInactiveDesc,
+                    text = statusDesc,
                     fontSize = 11.5.sp,
                     lineHeight = 15.sp
                 )
-                if (!isHookActive) {
+                if (isHookActive == false) {
                     Spacer(modifier = Modifier.height(8.dp))
                     FilledTonalButton(
                         onClick = {
@@ -1605,7 +1634,7 @@ private fun MiniBadge(
 @Composable
 private fun SettingsTabScreen(
     context: Context,
-    isHookActive: Boolean,
+    isHookActive: Boolean?,
     availableUserIds: List<Int>,
     strings: AppStrings,
     langCode: String,
@@ -1901,7 +1930,7 @@ private fun SettingsTabScreen(
                 onClick = {
                     AppDiagnostics.openGitHubIssue(
                         context = context,
-                        isHookActive = isHookActive
+                        isHookActive = isHookActive == true
                     )
                 }
             )
