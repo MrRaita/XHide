@@ -996,6 +996,11 @@ private fun HomeTabScreen(
             false -> MaterialTheme.colorScheme.errorContainer
             null -> MaterialTheme.colorScheme.surfaceVariant
         }
+        val cardContentColor = when (isHookActive) {
+            true -> MaterialTheme.colorScheme.onPrimaryContainer
+            false -> MaterialTheme.colorScheme.onErrorContainer
+            null -> MaterialTheme.colorScheme.onSurfaceVariant
+        }
         val dotColor = when (isHookActive) {
             true -> MaterialTheme.colorScheme.primary
             false -> MaterialTheme.colorScheme.error
@@ -1016,7 +1021,10 @@ private fun HomeTabScreen(
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = cardBg)
+            colors = CardDefaults.cardColors(
+                containerColor = cardBg,
+                contentColor = cardContentColor
+            )
         ) {
             Column(
                 modifier = Modifier
@@ -1034,20 +1042,22 @@ private fun HomeTabScreen(
                     Text(
                         text = statusTitle,
                         fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        color = cardContentColor
                     )
                     Spacer(modifier = Modifier.weight(1f))
                     Text(
                         text = "${Build.MODEL} · SDK ${Build.VERSION.SDK_INT}",
                         fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = cardContentColor.copy(alpha = 0.82f)
                     )
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = statusDesc,
                     fontSize = 11.5.sp,
-                    lineHeight = 15.sp
+                    lineHeight = 15.sp,
+                    color = cardContentColor.copy(alpha = 0.9f)
                 )
                 if (isHookActive == false) {
                     Spacer(modifier = Modifier.height(8.dp))
