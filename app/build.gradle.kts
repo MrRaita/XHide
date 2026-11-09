@@ -11,8 +11,8 @@ android {
         applicationId = "org.lsposed.hidexposed"
         minSdk = 30
         targetSdk = 37
-        versionCode = 103
-        versionName = "1.0.3"
+        versionCode = 104
+        versionName = "1.0.4"
     }
 
     signingConfigs {
@@ -24,6 +24,27 @@ android {
                 keyAlias = System.getenv("KEY_ALIAS")
                 keyPassword = System.getenv("KEY_PASSWORD")
             } else {
+                val debugStore = getByName("debug").storeFile
+                if (debugStore != null && !debugStore.exists()) {
+                    debugStore.parentFile?.mkdirs()
+                    val javaHome = System.getProperty("java.home")
+                    val keytoolBin = file("$javaHome/bin/keytool").takeIf { it.exists() }?.absolutePath ?: "keytool"
+                    try {
+                        ProcessBuilder(
+                            keytoolBin,
+                            "-genkeypair",
+                            "-alias", "androiddebugkey",
+                            "-keypass", "android",
+                            "-keystore", debugStore.absolutePath,
+                            "-storepass", "android",
+                            "-dname", "CN=Android Debug,O=Android,C=US",
+                            "-keyalg", "RSA",
+                            "-keysize", "2048",
+                            "-validity", "10000"
+                        ).inheritIO().start().waitFor()
+                    } catch (_: Throwable) {
+                    }
+                }
                 initWith(getByName("debug"))
             }
         }
