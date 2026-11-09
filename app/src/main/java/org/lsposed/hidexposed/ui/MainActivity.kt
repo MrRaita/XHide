@@ -1958,11 +1958,6 @@ private fun SettingsTabScreen(
         // Section 4: About & System
         SettingsSectionCard(title = strings.sectionAbout) {
             CompactInfoRow(
-                title = strings.protectedManagersTitle,
-                value = "Vector · LSPosed · KernelSU · KSU Next · Magisk · APatch · LSPatch · EdXposed"
-            )
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
-            CompactInfoRow(
                 title = strings.hookTargetTitle,
                 value = "LauncherAppsService\$LauncherAppsImpl"
             )
@@ -2218,7 +2213,7 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
             val appInfo = info.applicationInfo ?: continue
             val pkg = appInfo.packageName ?: continue
             installedPackagesSet.add(pkg)
-            if (pkg == "android" || ModuleCache.KNOWN_MANAGERS.contains(pkg)) continue
+            if (pkg == "android") continue
 
             val userId = getUserIdFromHandle(info.user, userManager)
             val key = ConfigStore.userKey(userId, pkg)
@@ -2264,7 +2259,7 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
     for (appInfo in installedApps) {
         val pkg = appInfo.packageName ?: continue
         installedPackagesSet.add(pkg)
-        if (pkg == "android" || ModuleCache.KNOWN_MANAGERS.contains(pkg)) continue
+        if (pkg == "android") continue
 
         val key = ConfigStore.userKey(0, pkg)
         if (entriesMap.containsKey(key)) continue

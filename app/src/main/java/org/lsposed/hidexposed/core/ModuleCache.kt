@@ -27,29 +27,13 @@ object ModuleCache {
     // Key: "packageName|sourceDir" -> Value: true if Xposed module, false otherwise
     private val apkModuleCache = ConcurrentHashMap<String, Boolean>()
 
-    // Managers and core system packages that should never be treated as regular hidden modules by default
-    val KNOWN_MANAGERS = setOf(
-        "org.lsposed.manager",
-        "io.github.lsposed.manager",
-        "org.lsposed.vector",
-        "io.github.vector",
-        "org.lsposed.lspatch",
-        "de.robv.android.xposed.installer",
-        "org.meowcat.edxposed.manager",
-        "me.weishu.kernelsu",
-        "com.rifsxd.ksunext",
-        "com.topjohnwu.magisk",
-        "io.github.vvb2060.magisk",
-        "me.bmax.apatch"
-    )
-
     fun isXposedModule(
         packageName: String,
         appInfo: ApplicationInfo?,
         context: Context?,
         userHandle: UserHandle?
     ): Boolean {
-        if (packageName == "android" || KNOWN_MANAGERS.contains(packageName)) {
+        if (packageName == "android") {
             return false
         }
 
