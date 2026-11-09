@@ -687,9 +687,9 @@ object LauncherHook {
 
     /**
      * Notifies all registered launchers across all user profiles on Android 11–17:
-     * 1. First attempts `MyPackageMonitor#onPackageChanged(String, UserHandle)` (Android 12–17).
-     * 2. Falls back to broadcasting `IOnAppsChangedListener#onPackageChanged(UserHandle, String)`
-     *    directly via `LauncherAppsImpl#mListeners` (Android 11–17 universal).
+     * Broadcasts `onPackageRemoved` / `onPackagesUnavailable` when hiding so OEM launchers (One UI Home,
+     * HyperOS, ColorOS) and AOSP Launcher3 immediately purge icons from persistent SQLite caches and UI.
+     * Broadcasts `onPackageAdded` / `onPackagesAvailable` when unhiding so launchers re-query activities.
      */
     private fun notifyLaunchersOfChanges(
         launcherAppsImpl: Any?,
@@ -698,26 +698,12 @@ object LauncherHook {
     ) {
         if (launcherAppsImpl == null || changedPackages.isEmpty()) return
         try {
-            val monitor = XposedHelpers.getObjectField(launcherAppsImpl, "mPackageMonitor")
             val handler = XposedHelpers.getObjectField(launcherAppsImpl, "mCallbackHandler") as? Handler
             val profiles = collectAllUserHandles(launcherAppsImpl, fallbackUserHandle)
 
             val task = Runnable {
                 for (profile in profiles) {
-                    var monitorSuccess = false
-                    if (monitor != null) {
-                        try {
-                            for (pkg in changedPackages) {
-                                XposedHelpers.callMethod(monitor, "onPackageChanged", pkg, profile)
-                            }
-                            monitorSuccess = true
-                        } catch (_: Throwable) {
-                            monitorSuccess = false
-                        }
-                    }
-                    if (!monitorSuccess) {
-                        broadcastOnPackageChangedBatch(launcherAppsImpl, profile, changedPackages)
-                    }
+                    broadcastOnPackageChangedBatch(launcherAppsImpl, profile, changedPackages)
                 }
             }
             if (handler != null) {
@@ -739,17 +725,20 @@ object LauncherHook {
             val count = listeners.beginBroadcast()
             val userId = getUserId(profile)
             try {
+                val (hiddenPkgs, unhiddenPkgs) = changedPackages.partition { pkg ->
+                    ConfigStore.shouldHidePackage(
+                        packageName = pkg,
+                        userId = userId,
+                        isDetectedXposedModule = true
+                    )
+                }
+
                 for (i in 0 until count) {
                     val listener = listeners.getBroadcastItem(i) as? IInterface ?: continue
-                    for (pkg in changedPackages) {
-                        val isHidden = ConfigStore.shouldHidePackage(
-                            packageName = pkg,
-                            userId = userId,
-                            isDetectedXposedModule = true
-                        )
 
-                        if (isHidden) {
-                            // When hidden: notify removal so launcher immediately drops icon from drawer/workspace
+                    // 1. Process Hidden Packages
+                    if (hiddenPkgs.isNotEmpty()) {
+                        for (pkg in hiddenPkgs) {
                             try {
                                 XposedHelpers.callMethod(listener, "onPackageRemoved", profile, pkg)
                             } catch (_: Throwable) {
@@ -758,10 +747,16 @@ object LauncherHook {
                                 XposedHelpers.callMethod(listener, "onPackageChanged", profile, pkg)
                             } catch (_: Throwable) {
                             }
-                        } else {
-                            // When unhidden: notify addition so launcher model queries getLauncherActivities
-                            // and immediately inserts the restored icon. In AOSP Launcher3/OEM launchers,
-                            // onPackageChanged is ignored if the item is absent from the launcher's model!
+                        }
+                        try {
+                            XposedHelpers.callMethod(listener, "onPackagesUnavailable", profile, hiddenPkgs.toTypedArray(), false)
+                        } catch (_: Throwable) {
+                        }
+                    }
+
+                    // 2. Process Unhidden Packages
+                    if (unhiddenPkgs.isNotEmpty()) {
+                        for (pkg in unhiddenPkgs) {
                             try {
                                 XposedHelpers.callMethod(listener, "onPackageAdded", profile, pkg)
                             } catch (_: Throwable) {
@@ -770,6 +765,10 @@ object LauncherHook {
                                 XposedHelpers.callMethod(listener, "onPackageChanged", profile, pkg)
                             } catch (_: Throwable) {
                             }
+                        }
+                        try {
+                            XposedHelpers.callMethod(listener, "onPackagesAvailable", profile, unhiddenPkgs.toTypedArray(), false)
+                        } catch (_: Throwable) {
                         }
                     }
                 }
