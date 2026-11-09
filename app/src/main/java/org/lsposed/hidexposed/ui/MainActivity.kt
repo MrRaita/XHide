@@ -1005,6 +1005,12 @@ private fun HomeTabScreen(
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        Text(
+            text = "XHide",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 2.dp, top = 4.dp, bottom = 2.dp)
+        )
         val cardBg = when (isHookActive) {
             true -> MaterialTheme.colorScheme.primaryContainer
             false -> MaterialTheme.colorScheme.errorContainer
@@ -1406,7 +1412,12 @@ private fun AppsTabScreen(
             .fillMaxSize()
             .padding(horizontal = 12.dp)
     ) {
-        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = strings.navApps,
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 2.dp, top = 4.dp, bottom = 6.dp)
+        )
 
         // Compact Search Bar (38dp height) & Refresh Button
         Row(
@@ -1757,6 +1768,12 @@ private fun SettingsTabScreen(
             .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        Text(
+            text = strings.navSettings,
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 2.dp, top = 4.dp, bottom = 2.dp)
+        )
         // Section 1: Hiding Rules
         SettingsSectionCard(title = strings.sectionHidingRules) {
             CompactSwitchRow(
