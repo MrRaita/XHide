@@ -273,6 +273,15 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+data class PendingImportConfig(
+    val autoHide: Boolean,
+    val autoHideClone: Boolean,
+    val whitelist: Set<String>,
+    val blacklist: Set<String>,
+    val validCount: Int,
+    val skippedCount: Int
+)
+
 @Composable
 fun MainScreen(
     langCode: String,
@@ -298,6 +307,8 @@ fun MainScreen(
     var defaultLauncher by remember { mutableStateOf<LauncherInfo?>(null) }
     var isLoading by remember { mutableStateOf(true) }
     var isRefreshing by remember { mutableStateOf(false) }
+    var showResetConfirmDialog by remember { mutableStateOf(false) }
+    var pendingImport by remember { mutableStateOf<PendingImportConfig?>(null) }
     var searchQuery by remember { mutableStateOf("") }
     // Default filter mode is AllApps ("Tümü") as requested
     var filterMode by remember { mutableStateOf<FilterMode>(FilterMode.AllApps) }
@@ -525,12 +536,14 @@ fun MainScreen(
                     val newAuto = json.optBoolean("autoHide", true)
                     val newAutoClone = json.optBoolean("autoHideClone", true)
                     val newWl = mutableSetOf<String>()
+                    var skipped = 0
                     val wlArr = json.optJSONArray("whitelist")
                     if (wlArr != null) {
                         val limit = minOf(wlArr.length(), 4096)
                         for (i in 0 until limit) {
                             val s = wlArr.optString(i)
                             if (ConfigStore.isValidConfigKey(s)) newWl.add(s)
+                            else skipped++
                         }
                     }
                     val newBl = mutableSetOf<String>()
@@ -540,23 +553,18 @@ fun MainScreen(
                         for (i in 0 until limit) {
                             val s = blArr.optString(i)
                             if (ConfigStore.isValidConfigKey(s)) newBl.add(s)
+                            else skipped++
                         }
                     }
-                    val allPkgs = apps.map { it.packageName }.distinct()
-                    ConfigStore.saveUiPrefsAndSync(
-                        context = context,
-                        autoHide = newAuto,
-                        autoHideClone = newAutoClone,
-                        whitelist = newWl,
-                        blacklist = newBl,
-                        changedPackages = allPkgs
-                    )
                     withContext(Dispatchers.Main) {
-                        autoHideModules = newAuto
-                        autoHideCloneModules = newAutoClone
-                        whitelist = newWl
-                        blacklist = newBl
-                        Toast.makeText(context, strings.importedToast, Toast.LENGTH_SHORT).show()
+                        pendingImport = PendingImportConfig(
+                            autoHide = newAuto,
+                            autoHideClone = newAutoClone,
+                            whitelist = newWl,
+                            blacklist = newBl,
+                            validCount = newWl.size + newBl.size,
+                            skippedCount = skipped
+                        )
                     }
                 } catch (_: Throwable) {
                     withContext(Dispatchers.Main) {
@@ -565,6 +573,110 @@ fun MainScreen(
                 }
             }
         }
+    }
+
+    if (showResetConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showResetConfirmDialog = false },
+            title = { Text(text = strings.resetAllTitle, fontWeight = FontWeight.Bold) },
+            text = { Text(text = strings.resetConfirmMessage) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showResetConfirmDialog = false
+                        val defaultWl = setOf(ConfigStore.SELF_USER0_KEY)
+                        val defaultBl = emptySet<String>()
+                        val prevAutoHide = autoHideModules
+                        val prevAutoHideClone = autoHideCloneModules
+                        val prevWl = whitelist
+                        val prevBl = blacklist
+
+                        autoHideModules = true
+                        autoHideCloneModules = true
+                        whitelist = defaultWl
+                        blacklist = defaultBl
+                        val allPkgs = apps.map { it.packageName }.distinct()
+                        syncWithSystem(
+                            newAutoHide = true,
+                            newAutoHideClone = true,
+                            newWl = defaultWl,
+                            newBl = defaultBl,
+                            changedPkgs = allPkgs,
+                            onRevert = {
+                                autoHideModules = prevAutoHide
+                                autoHideCloneModules = prevAutoHideClone
+                                whitelist = prevWl
+                                blacklist = prevBl
+                            }
+                        )
+                        Toast.makeText(context, strings.resetDoneToast, Toast.LENGTH_SHORT).show()
+                    }
+                ) {
+                    Text(text = strings.resetConfirmBtn, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetConfirmDialog = false }) {
+                    Text(text = strings.dismissBtn)
+                }
+            }
+        )
+    }
+
+    pendingImport?.let { cfg ->
+        AlertDialog(
+            onDismissRequest = { pendingImport = null },
+            title = { Text(text = strings.importConfirmTitle, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    text = String.format(
+                        java.util.Locale.getDefault(),
+                        strings.importConfirmMessage,
+                        cfg.validCount,
+                        cfg.skippedCount
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val prevAutoHide = autoHideModules
+                        val prevAutoHideClone = autoHideCloneModules
+                        val prevWl = whitelist
+                        val prevBl = blacklist
+
+                        autoHideModules = cfg.autoHide
+                        autoHideCloneModules = cfg.autoHideClone
+                        whitelist = cfg.whitelist
+                        blacklist = cfg.blacklist
+                        pendingImport = null
+
+                        val allPkgs = apps.map { it.packageName }.distinct()
+                        syncWithSystem(
+                            newAutoHide = cfg.autoHide,
+                            newAutoHideClone = cfg.autoHideClone,
+                            newWl = cfg.whitelist,
+                            newBl = cfg.blacklist,
+                            changedPkgs = allPkgs,
+                            onRevert = {
+                                autoHideModules = prevAutoHide
+                                autoHideCloneModules = prevAutoHideClone
+                                whitelist = prevWl
+                                blacklist = prevBl
+                            }
+                        )
+                        Toast.makeText(context, strings.importedToast, Toast.LENGTH_SHORT).show()
+                    }
+                ) {
+                    Text(text = strings.importConfirmBtn, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingImport = null }) {
+                    Text(text = strings.dismissBtn)
+                }
+            }
+        )
     }
 
     if (pendingCrashReport != null) {
@@ -814,21 +926,7 @@ fun MainScreen(
                             importLauncher.launch(arrayOf("application/json", "*/*"))
                         },
                         onResetAll = {
-                            val defaultWl = setOf(ConfigStore.SELF_USER0_KEY)
-                            val defaultBl = emptySet<String>()
-                            autoHideModules = true
-                            autoHideCloneModules = true
-                            whitelist = defaultWl
-                            blacklist = defaultBl
-                            val allPkgs = apps.map { it.packageName }.distinct()
-                            syncWithSystem(
-                                newAutoHide = true,
-                                newAutoHideClone = true,
-                                newWl = defaultWl,
-                                newBl = defaultBl,
-                                changedPkgs = allPkgs
-                            )
-                            Toast.makeText(context, strings.resetDoneToast, Toast.LENGTH_SHORT).show()
+                            showResetConfirmDialog = true
                         }
                     )
                 }
