@@ -1,6 +1,6 @@
 # XHide v1.0.4 - Release Notes
 
-Comprehensive code optimizations, security enhancements, accessibility fixes, and architectural improvements in this release were implemented based on the detailed source code review and bug reports provided by @MrRaita (https://github.com/MrRaita). Special thanks for the valuable contributions.
+Comprehensive code optimizations, security enhancements, accessibility fixes, and architectural improvements in this release were implemented based on the detailed source code review and bug reports provided by [@MrRaita](https://github.com/MrRaita). Special thanks for the valuable contributions.
 
 ---
 
