@@ -785,67 +785,8 @@ fun MainScreen(
         )
     }
 
-    val statusBarPadding = WindowInsets.statusBars.asPaddingValues()
-
     Scaffold(
-        topBar = {
-            Surface(
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 1.dp
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = statusBarPadding.calculateTopPadding())
-                        .heightIn(min = 48.dp)
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "XHide",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    val (badgeText, badgeBg, badgeFg) = when (isHookActive) {
-                        true -> Triple(
-                            strings.badgeActive,
-                            MaterialTheme.colorScheme.primaryContainer,
-                            MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        false -> Triple(
-                            strings.badgeInactive,
-                            MaterialTheme.colorScheme.errorContainer,
-                            MaterialTheme.colorScheme.onErrorContainer
-                        )
-                        null -> Triple(
-                            strings.badgeChecking,
-                            MaterialTheme.colorScheme.surfaceVariant,
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Surface(
-                        color = badgeBg,
-                        shape = RoundedCornerShape(6.dp)
-                    ) {
-                        Text(
-                            text = badgeText,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = badgeFg,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.weight(1f))
-                    IconButton(
-                        onClick = { refreshState(showToastOnDone = true) },
-                        modifier = Modifier.size(34.dp)
-                    ) {
-                        RefreshVectorIcon()
-                    }
-                }
-            }
-        },
+        contentWindowInsets = WindowInsets.statusBars,
         bottomBar = {
             NavigationBar(
                 modifier = Modifier.heightIn(min = 64.dp),
@@ -935,6 +876,7 @@ fun MainScreen(
                             onFilterModeChange = { filterMode = it },
                             isEntryHidden = isHiddenPredicate,
                             listState = appsListState,
+                            onRefresh = { refreshState(showToastOnDone = true) },
                             onToggleAppHidden = { entry, hide ->
                                 updateAppHidden(entry, hide)
                             }
@@ -1414,6 +1356,7 @@ private fun AppsTabScreen(
     onFilterModeChange: (FilterMode) -> Unit,
     isEntryHidden: (AppEntry) -> Boolean,
     listState: LazyListState,
+    onRefresh: () -> Unit,
     onToggleAppHidden: (AppEntry, Boolean) -> Unit
 ) {
     val filteredApps = remember(
@@ -1465,60 +1408,78 @@ private fun AppsTabScreen(
     ) {
         Spacer(modifier = Modifier.height(6.dp))
 
-        // Compact Search Bar (38dp height)
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(38.dp),
-            shape = RoundedCornerShape(10.dp),
-            tonalElevation = 2.dp
+        // Compact Search Bar (38dp height) & Refresh Button
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
+            Surface(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .weight(1f)
+                    .height(38.dp),
+                shape = RoundedCornerShape(10.dp),
+                tonalElevation = 2.dp
             ) {
-                SearchVectorIcon()
-                Spacer(modifier = Modifier.width(8.dp))
-                Box(modifier = Modifier.weight(1f)) {
-                    if (searchQuery.isEmpty()) {
-                        Text(
-                            text = strings.searchPlaceholder,
-                            fontSize = 12.5.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SearchVectorIcon()
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(modifier = Modifier.weight(1f)) {
+                        if (searchQuery.isEmpty()) {
+                            Text(
+                                text = strings.searchPlaceholder,
+                                fontSize = 12.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        val focusManager = LocalFocusManager.current
+                        BasicTextField(
+                            value = searchQuery,
+                            onValueChange = onSearchChange,
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
+                            textStyle = TextStyle(
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 12.5.sp
+                            ),
+                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
-                    val focusManager = LocalFocusManager.current
-                    BasicTextField(
-                        value = searchQuery,
-                        onValueChange = onSearchChange,
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
-                        textStyle = TextStyle(
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 12.5.sp
-                        ),
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    if (searchQuery.isNotEmpty()) {
+                        val focusManager = LocalFocusManager.current
+                        IconButton(
+                            onClick = {
+                                onSearchChange("")
+                                focusManager.clearFocus()
+                            },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Text(
+                                text = "✕",
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
-                if (searchQuery.isNotEmpty()) {
-                    val focusManager = LocalFocusManager.current
-                    IconButton(
-                        onClick = {
-                            onSearchChange("")
-                            focusManager.clearFocus()
-                        },
-                        modifier = Modifier.size(28.dp)
-                    ) {
-                        Text(
-                            text = "✕",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Surface(
+                modifier = Modifier.size(38.dp),
+                shape = RoundedCornerShape(10.dp),
+                tonalElevation = 2.dp
+            ) {
+                IconButton(
+                    onClick = onRefresh,
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    RefreshVectorIcon()
                 }
             }
         }
