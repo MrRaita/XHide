@@ -95,6 +95,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
@@ -879,6 +886,7 @@ fun MainScreen(
                             onFilterModeChange = { filterMode = it },
                             isEntryHidden = isHiddenPredicate,
                             listState = appsListState,
+                            isRefreshing = isRefreshing,
                             onRefresh = { refreshState(showToastOnDone = true) },
                             onToggleAppHidden = { entry, hide ->
                                 updateAppHidden(entry, hide)
@@ -1352,6 +1360,7 @@ private fun AppsTabScreen(
     onFilterModeChange: (FilterMode) -> Unit,
     isEntryHidden: (AppEntry) -> Boolean,
     listState: LazyListState,
+    isRefreshing: Boolean = false,
     onRefresh: () -> Unit,
     onToggleAppHidden: (AppEntry, Boolean) -> Unit
 ) {
@@ -1480,9 +1489,10 @@ private fun AppsTabScreen(
             ) {
                 IconButton(
                     onClick = onRefresh,
+                    enabled = !isRefreshing,
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    RefreshVectorIcon()
+                    RefreshVectorIcon(isRefreshing = isRefreshing)
                 }
             }
         }
@@ -2482,34 +2492,30 @@ private fun SettingsVectorIcon() {
 }
 
 @Composable
-private fun RefreshVectorIcon() {
-    val color = LocalContentColor.current
-    Canvas(modifier = Modifier.size(19.dp)) {
-        val w = size.width
-        val h = size.height
-        val strokeWidth = 1.8.dp.toPx()
-        // Circular arc from 40 deg to 315 deg (-45 deg top-right)
-        drawArc(
-            color = color,
-            startAngle = 40f,
-            sweepAngle = 275f,
-            useCenter = false,
-            topLeft = Offset(w * 0.16f, h * 0.16f),
-            size = Size(w * 0.68f, h * 0.68f),
-            style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
-        )
-        // Arrowhead at top-right tip of the arc (around x=0.74, y=0.26)
-        val arrowHead = Path().apply {
-            moveTo(w * 0.56f, h * 0.26f)
-            lineTo(w * 0.77f, h * 0.26f)
-            lineTo(w * 0.77f, h * 0.06f)
-        }
-        drawPath(
-            path = arrowHead,
-            color = color,
-            style = Stroke(width = strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round)
-        )
-    }
+private fun RefreshVectorIcon(
+    modifier: Modifier = Modifier,
+    isRefreshing: Boolean = false
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "refresh_spin")
+    val spinAngle by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 800, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "refresh_angle"
+    )
+    val rotationAngle = if (isRefreshing) spinAngle else 0f
+
+    Icon(
+        painter = painterResource(id = org.lsposed.hidexposed.R.drawable.ic_refresh),
+        contentDescription = "Refresh",
+        modifier = modifier
+            .size(20.dp)
+            .rotate(rotationAngle),
+        tint = MaterialTheme.colorScheme.onSurfaceVariant
+    )
 }
 
 @Composable
