@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.os.Binder
@@ -72,8 +73,6 @@ object LauncherHook {
                 .onFailure { XposedBridge.log("[$TAG] hookGetShortcuts failed: ${it.message}") }
             runCatching { hookResolveAndEnabledChecks(clazz) }
                 .onFailure { XposedBridge.log("[$TAG] hookResolveAndEnabledChecks failed: ${it.message}") }
-            runCatching { hookPackageManagerGetActivityInfo(classLoader) }
-                .onFailure { XposedBridge.log("[$TAG] hookPackageManagerGetActivityInfo failed: ${it.message}") }
 
             XposedBridge.log("[$TAG] Successfully installed system hooks on $TARGET_CLASS (Android 11–17)")
         } catch (t: Throwable) {
@@ -461,6 +460,44 @@ object LauncherHook {
         } catch (_: Throwable) {
         }
 
+        // Android 11–17: isPackageEnabled(String, String, UserHandle)
+        try {
+            XposedHelpers.findAndHookMethod(
+                clazz,
+                "isPackageEnabled",
+                String::class.java,
+                String::class.java,
+                UserHandle::class.java,
+                object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        try {
+                            if (param.result != true) return
+                            val callingPackage = param.args[0] as? String ?: return
+                            val callingUid = Binder.getCallingUid()
+                            if (isExemptCaller(callingPackage, callingUid, param.thisObject)) return
+
+                            val pkgName = param.args[1] as? String ?: return
+                            val userHandle = param.args[2] as? UserHandle
+                            val userId = getUserId(userHandle)
+                            val context = getContextFromImpl(param.thisObject)
+
+                            val isModule = ModuleCache.isXposedModule(
+                                packageName = pkgName,
+                                appInfo = null,
+                                context = context,
+                                userHandle = userHandle
+                            )
+                            if (ConfigStore.shouldHidePackage(pkgName, userId, isModule)) {
+                                param.result = false
+                            }
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
+            )
+        } catch (_: Throwable) {
+        }
+
         // Android 11–17: isActivityEnabled(String, ComponentName, UserHandle)
         try {
             XposedHelpers.findAndHookMethod(
@@ -491,6 +528,132 @@ object LauncherHook {
                             )
                             if (ConfigStore.shouldHidePackage(pkgName, userId, isModule)) {
                                 param.result = false
+                            }
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
+            )
+        } catch (_: Throwable) {
+        }
+
+        // Android 11–17: getApplicationInfo(String, String, int/long, UserHandle)
+        val appInfoCallback = object : XC_MethodHook() {
+            override fun afterHookedMethod(param: MethodHookParam) {
+                try {
+                    if (param.result == null) return
+                    val callingPackage = param.args[0] as? String ?: return
+                    val callingUid = Binder.getCallingUid()
+                    if (isExemptCaller(callingPackage, callingUid, param.thisObject)) return
+
+                    val pkgName = param.args[1] as? String ?: return
+                    val userHandle = param.args[3] as? UserHandle
+                    val userId = getUserId(userHandle)
+                    val context = getContextFromImpl(param.thisObject)
+                    val appInfo = param.result as? ApplicationInfo
+
+                    val isModule = ModuleCache.isXposedModule(
+                        packageName = pkgName,
+                        appInfo = appInfo,
+                        context = context,
+                        userHandle = userHandle
+                    )
+                    if (ConfigStore.shouldHidePackage(pkgName, userId, isModule)) {
+                        param.result = null
+                    }
+                } catch (_: Throwable) {
+                }
+            }
+        }
+        try {
+            XposedHelpers.findAndHookMethod(
+                clazz,
+                "getApplicationInfo",
+                String::class.java,
+                String::class.java,
+                Int::class.javaPrimitiveType,
+                UserHandle::class.java,
+                appInfoCallback
+            )
+        } catch (_: Throwable) {
+        }
+        try {
+            XposedHelpers.findAndHookMethod(
+                clazz,
+                "getApplicationInfo",
+                String::class.java,
+                String::class.java,
+                Long::class.javaPrimitiveType,
+                UserHandle::class.java,
+                appInfoCallback
+            )
+        } catch (_: Throwable) {
+        }
+
+        // Android 12–17: shouldHideFromSuggestions(String, UserHandle)
+        try {
+            XposedHelpers.findAndHookMethod(
+                clazz,
+                "shouldHideFromSuggestions",
+                String::class.java,
+                UserHandle::class.java,
+                object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        try {
+                            if (param.result == true) return
+                            val pkgName = param.args[0] as? String ?: return
+                            if (pkgName == ConfigStore.SELF_PACKAGE) return
+                            val userHandle = param.args[1] as? UserHandle
+                            val userId = getUserId(userHandle)
+                            val context = getContextFromImpl(param.thisObject)
+
+                            val isModule = ModuleCache.isXposedModule(
+                                packageName = pkgName,
+                                appInfo = null,
+                                context = context,
+                                userHandle = userHandle
+                            )
+                            if (ConfigStore.shouldHidePackage(pkgName, userId, isModule)) {
+                                param.result = true
+                            }
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
+            )
+        } catch (_: Throwable) {
+        }
+
+        // Android 11–17: getActivityLaunchIntent(String, ComponentName, UserHandle)
+        try {
+            XposedHelpers.findAndHookMethod(
+                clazz,
+                "getActivityLaunchIntent",
+                String::class.java,
+                ComponentName::class.java,
+                UserHandle::class.java,
+                object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        try {
+                            if (param.result == null) return
+                            val callingPackage = param.args[0] as? String ?: return
+                            val callingUid = Binder.getCallingUid()
+                            if (isExemptCaller(callingPackage, callingUid, param.thisObject)) return
+
+                            val component = param.args[1] as? ComponentName ?: return
+                            val pkgName = component.packageName
+                            val userHandle = param.args[2] as? UserHandle
+                            val userId = getUserId(userHandle)
+                            val context = getContextFromImpl(param.thisObject)
+
+                            val isModule = ModuleCache.isXposedModule(
+                                packageName = pkgName,
+                                appInfo = null,
+                                context = context,
+                                userHandle = userHandle
+                            )
+                            if (ConfigStore.shouldHidePackage(pkgName, userId, isModule)) {
+                                param.result = null
                             }
                         } catch (_: Throwable) {
                         }
@@ -586,145 +749,10 @@ object LauncherHook {
         }
     }
 
-    private val launcherCallerUidCache = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
-
-    private fun isLauncherOrSearchCaller(callingUid: Int, context: Context): Boolean {
-        if (callingUid == Process.SYSTEM_UID || callingUid == 0) return false
-        val cached = launcherCallerUidCache[callingUid]
-        if (cached != null) return cached
-
-        val token = Binder.clearCallingIdentity()
-        val isLauncher = try {
-            val pm = context.packageManager
-            val packages = pm.getPackagesForUid(callingUid) ?: emptyArray()
-            val knownSearchOrLaunchers = setOf(
-                "com.sec.android.app.launcher",
-                "com.samsung.android.app.galaxyfinder",
-                "com.samsung.android.scs",
-                "com.samsung.mediasearch",
-                "com.google.android.googlequicksearchbox",
-                "com.android.launcher3"
-            )
-            var match = packages.any { it in knownSearchOrLaunchers }
-            if (!match) {
-                val homeIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
-                val homeActivities = pm.queryIntentActivities(homeIntent, PackageManager.MATCH_ALL)
-                val homePkgs = homeActivities.mapNotNull { it.activityInfo?.packageName }.toSet()
-                match = packages.any { it in homePkgs }
-            }
-            match
-        } catch (_: Throwable) {
-            false
-        } finally {
-            Binder.restoreCallingIdentity(token)
-        }
-
-        launcherCallerUidCache[callingUid] = isLauncher
-        return isLauncher
-    }
-
-    private fun hookPackageManagerGetActivityInfo(classLoader: ClassLoader) {
-        val pmsClass = XposedHelpers.findClassIfExists("com.android.server.pm.PackageManagerService\$IPackageManagerImpl", classLoader)
-            ?: XposedHelpers.findClassIfExists("com.android.server.pm.PackageManagerService", classLoader)
-            ?: return
-
-        val callback = object : XC_MethodHook() {
-            override fun afterHookedMethod(param: MethodHookParam) {
-                try {
-                    if (param.result == null) return
-                    val callingUid = Binder.getCallingUid()
-                    if (callingUid == Process.SYSTEM_UID || callingUid == 0) return
-
-                    val component = param.args[0] as? ComponentName ?: return
-                    val pkgName = component.packageName
-                    if (pkgName == ConfigStore.SELF_PACKAGE) return
-
-                    val context = getContextFromImpl(param.thisObject) ?: return
-                    if (!isLauncherOrSearchCaller(callingUid, context)) return
-
-                    val userId = (param.args[2] as? Number)?.toInt() ?: 0
-
-                    val isModule = ModuleCache.isXposedModule(
-                        packageName = pkgName,
-                        appInfo = null,
-                        context = context,
-                        userHandle = createUserHandle(userId)
-                    )
-
-                    if (ConfigStore.shouldHidePackage(pkgName, userId, isModule)) {
-                        param.result = null
-                    }
-                } catch (_: Throwable) {
-                }
-            }
-        }
-
-        // Android 13–17: getActivityInfo(ComponentName className, long flags, int userId)
-        try {
-            XposedHelpers.findAndHookMethod(
-                pmsClass,
-                "getActivityInfo",
-                ComponentName::class.java,
-                Long::class.javaPrimitiveType,
-                Int::class.javaPrimitiveType,
-                callback
-            )
-        } catch (_: Throwable) {
-        }
-
-        // Android 11–12: getActivityInfo(ComponentName className, int flags, int userId)
-        try {
-            XposedHelpers.findAndHookMethod(
-                pmsClass,
-                "getActivityInfo",
-                ComponentName::class.java,
-                Int::class.javaPrimitiveType,
-                Int::class.javaPrimitiveType,
-                callback
-            )
-        } catch (_: Throwable) {
-        }
-    }
-
-    private fun createUserHandle(userId: Int): UserHandle? {
-        return try {
-            XposedHelpers.callStaticMethod(UserHandle::class.java, "of", userId) as? UserHandle
-        } catch (_: Throwable) {
-            try {
-                XposedHelpers.newInstance(UserHandle::class.java, userId) as? UserHandle
-            } catch (_: Throwable) {
-                null
-            }
-        }
-    }
-
     private fun getContextFromImpl(serviceObject: Any?): Context? {
-        if (serviceObject != null) {
-            val ctx = try {
-                XposedHelpers.getObjectField(serviceObject, "mContext") as? Context
-            } catch (_: Throwable) {
-                null
-            }
-            if (ctx != null) return ctx
-
-            val pms = try {
-                XposedHelpers.getObjectField(serviceObject, "mService")
-            } catch (_: Throwable) {
-                null
-            }
-            if (pms != null) {
-                val pmsCtx = try {
-                    XposedHelpers.getObjectField(pms, "mContext") as? Context
-                } catch (_: Throwable) {
-                    null
-                }
-                if (pmsCtx != null) return pmsCtx
-            }
-        }
+        if (serviceObject == null) return null
         return try {
-            val atClass = Class.forName("android.app.ActivityThread")
-            val at = XposedHelpers.callStaticMethod(atClass, "currentActivityThread")
-            XposedHelpers.callMethod(at, "getSystemContext") as? Context
+            XposedHelpers.getObjectField(serviceObject, "mContext") as? Context
         } catch (_: Throwable) {
             null
         }
@@ -962,14 +990,21 @@ object LauncherHook {
 
                     // 1. Process Hidden Packages
                     if (hiddenPkgs.isNotEmpty()) {
+                        val emptySlice = runCatching {
+                            val sliceClass = Class.forName("android.content.pm.ParceledListSlice")
+                            XposedHelpers.callStaticMethod(sliceClass, "emptyList")
+                        }.getOrNull()
+
                         for (pkg in hiddenPkgs) {
                             try {
                                 XposedHelpers.callMethod(listener, "onPackageRemoved", profile, pkg)
                             } catch (_: Throwable) {
                             }
-                            try {
-                                XposedHelpers.callMethod(listener, "onPackageChanged", profile, pkg)
-                            } catch (_: Throwable) {
+                            if (emptySlice != null) {
+                                try {
+                                    XposedHelpers.callMethod(listener, "onShortcutChanged", profile, pkg, emptySlice)
+                                } catch (_: Throwable) {
+                                }
                             }
                         }
                         try {
@@ -983,10 +1018,6 @@ object LauncherHook {
                         for (pkg in unhiddenPkgs) {
                             try {
                                 XposedHelpers.callMethod(listener, "onPackageAdded", profile, pkg)
-                            } catch (_: Throwable) {
-                            }
-                            try {
-                                XposedHelpers.callMethod(listener, "onPackageChanged", profile, pkg)
                             } catch (_: Throwable) {
                             }
                         }
