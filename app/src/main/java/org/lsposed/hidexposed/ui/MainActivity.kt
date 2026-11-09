@@ -355,6 +355,7 @@ fun MainScreen(
     var defaultLauncher by remember { mutableStateOf<LauncherInfo?>(null) }
     var isLoading by remember { mutableStateOf(true) }
     var isRefreshing by remember { mutableStateOf(false) }
+    var isFetchingData by remember { mutableStateOf(false) }
     var showResetConfirmDialog by remember { mutableStateOf(false) }
     var pendingImport by remember { mutableStateOf<PendingImportConfig?>(null) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
@@ -442,36 +443,41 @@ fun MainScreen(
     }
 
     fun refreshState(showToastOnDone: Boolean = false) {
-        if (isLoading || isRefreshing) return
+        if (isFetchingData) return
+        isFetchingData = true
         scope.launch {
-            if (apps.isEmpty()) isLoading = true
-            else isRefreshing = true
+            try {
+                if (apps.isEmpty()) isLoading = true
+                else isRefreshing = true
 
-            val (active, loadedApps, launcher) = withContext(Dispatchers.IO) {
-                val activeDef = async { ConfigStore.pingSystemHook(context) }
-                val loadedAppsDef = async { loadInstalledAppsAcrossProfiles(context) }
-                val launcherDef = async { detectDefaultLauncher(context) }
-                Triple(activeDef.await(), loadedAppsDef.await(), launcherDef.await())
-            }
-            isHookActive = active
-            apps = loadedApps
-            defaultLauncher = launcher
+                val (active, loadedApps, launcher) = withContext(Dispatchers.IO) {
+                    val activeDef = async { ConfigStore.pingSystemHook(context) }
+                    val loadedAppsDef = async { loadInstalledAppsAcrossProfiles(context) }
+                    val launcherDef = async { detectDefaultLauncher(context) }
+                    Triple(activeDef.await(), loadedAppsDef.await(), launcherDef.await())
+                }
+                isHookActive = active
+                apps = loadedApps
+                defaultLauncher = launcher
 
-            val userManager = context.getSystemService(UserManager::class.java)
-            val launcherApps = context.getSystemService(LauncherApps::class.java)
-            val sysUserIds = try {
-                val pmProfiles = launcherApps?.profiles ?: userManager?.userProfiles
-                pmProfiles?.map { getUserIdFromHandle(it, userManager) } ?: listOf(0)
-            } catch (_: Throwable) {
-                listOf(0)
-            }
-            availableUserIds = (loadedApps.map { it.userId } + sysUserIds).distinct().sorted()
+                val userManager = context.getSystemService(UserManager::class.java)
+                val launcherApps = context.getSystemService(LauncherApps::class.java)
+                val sysUserIds = try {
+                    val pmProfiles = launcherApps?.profiles ?: userManager?.userProfiles
+                    pmProfiles?.map { getUserIdFromHandle(it, userManager) } ?: listOf(0)
+                } catch (_: Throwable) {
+                    listOf(0)
+                }
+                availableUserIds = (loadedApps.map { it.userId } + sysUserIds).distinct().sorted()
 
-            if (showToastOnDone) {
-                Toast.makeText(context, strings.launcherRefreshedToast, Toast.LENGTH_SHORT).show()
+                if (showToastOnDone) {
+                    Toast.makeText(context, strings.launcherRefreshedToast, Toast.LENGTH_SHORT).show()
+                }
+            } finally {
+                isLoading = false
+                isRefreshing = false
+                isFetchingData = false
             }
-            isLoading = false
-            isRefreshing = false
         }
     }
 
