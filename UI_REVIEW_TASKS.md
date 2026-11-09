@@ -15,8 +15,8 @@
 - [x] **1.6 Dinamik Sürüm Bilgisi:** Ayarlar ekranındaki sabit `"v1.0.2"` / `"v1.0.3"` metni yerine `BuildConfig.VERSION_NAME` dinamik sürüm bilgisi bağlandı.
 - [x] **1.7 Ana Sayfa Modül Kartı Metni:** "APK / Manifest / API 100" yerine modern modül tespit mimarisine uygun güncel "LibXposed & Manifest" açıklaması yerelleştirildi.
 - [x] **1.8 Korunan Yöneticiler Listesi Senkronizasyonu:** Ayarlardaki liste `KNOWN_MANAGERS` içeriğindeki tüm yöneticilerle senkronize edildi (Vector, LSPosed, KernelSU, KSU Next, Magisk, APatch, LSPatch, EdXposed).
-- [ ] **1.9 Sistem Çubuğu Renkleri ve Dinamik Edge-to-Edge:** Uygulama içi tema değiştirildiğinde (Açık/Koyu/AMOLED) `enableEdgeToEdge()` dinamik `SystemBarStyle` ile çağrılarak durum çubuğu ve navigasyon çubuğu ikonlarının okunabilirliği garanti edilmeli.
-- [ ] **1.10 Başlangıç Penceresi (Window Preview Theme):** Manifestteki sabit koyu pencere teması yerine sistem temasına uyumlu veya adaptif tema tanımlanmalı.
+- [x] **1.9 Sistem Çubuğu Renkleri ve Dinamik Edge-to-Edge:** Tema modu değişimlerini izleyen `DisposableEffect` ile `enableEdgeToEdge()` dinamik `SystemBarStyle` çağrıları entegre edildi; Açık/Koyu tema geçişlerinde sistem çubuğu simgelerinin okunabilirliği sağlandı.
+- [x] **1.10 Başlangıç Penceresi (Window Preview Theme):** Manifestteki sabit koyu tema yerine `res/values/themes.xml` ve `res/values-night/themes.xml` ile DayNight uyumlu `Theme.XHide` tanımlandı; açık tema kullanıcılarının başlangıçta siyah pencere görmesi engellendi.
 - [ ] **1.11 Profil Listesi Hata Bildirimi:** Kilitli Private Space veya duraklatılmış profiller sorgulanamadığında hata sessizce yutulmamalı, kullanıcıya bilgi verilmeli.
 - [ ] **1.12 Uygulama İkonu Önbellek İptali:** `appIconLruCache` anahtarına `lastUpdateTime` veya `versionCode` eklenerek uygulama güncellendiğinde eski ikonun kalması önlenmeli.
 - [ ] **1.13 Sistem Dili Değişikliği Takibi:** Sistem dili uygulama açıkken değiştiğinde "SYSTEM" modunun dinamik olarak yenilenmesi sağlanmalı.

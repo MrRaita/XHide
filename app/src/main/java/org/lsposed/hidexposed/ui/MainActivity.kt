@@ -21,6 +21,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.SystemBarStyle
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -230,6 +231,35 @@ class MainActivity : ComponentActivity() {
             var amoledBlack by remember { mutableStateOf(ConfigStore.amoledBlack) }
             var dynamicColor by remember { mutableStateOf(ConfigStore.dynamicColor) }
             var uiScale by remember { mutableStateOf(ConfigStore.uiScale) }
+
+            val systemDark = isSystemInDarkTheme()
+            val isDarkEffective = when (themeMode) {
+                "DARK" -> true
+                "LIGHT" -> false
+                else -> systemDark
+            }
+
+            DisposableEffect(isDarkEffective) {
+                enableEdgeToEdge(
+                    statusBarStyle = if (isDarkEffective) {
+                        SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                    } else {
+                        SystemBarStyle.light(
+                            android.graphics.Color.TRANSPARENT,
+                            android.graphics.Color.TRANSPARENT
+                        )
+                    },
+                    navigationBarStyle = if (isDarkEffective) {
+                        SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                    } else {
+                        SystemBarStyle.light(
+                            android.graphics.Color.TRANSPARENT,
+                            android.graphics.Color.TRANSPARENT
+                        )
+                    }
+                )
+                onDispose {}
+            }
 
             val density = LocalDensity.current
             val customDensity = remember(density, uiScale) {
