@@ -13,3 +13,5 @@ app/build
 dist/
 *.apk
 AGENT.md
+UI_REVIEW_TASKS.md
+*TASKS*.md
