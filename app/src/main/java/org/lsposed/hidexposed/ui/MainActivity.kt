@@ -115,6 +115,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import org.lsposed.hidexposed.core.AppDiagnostics
 import org.lsposed.hidexposed.core.ModuleCache
@@ -332,22 +334,33 @@ fun MainScreen(
         }
     }
 
+    val syncMutex = remember { Mutex() }
+
     fun syncWithSystem(
         newAutoHide: Boolean = autoHideModules,
         newAutoHideClone: Boolean = autoHideCloneModules,
         newWl: Set<String> = whitelist,
         newBl: Set<String> = blacklist,
-        changedPkgs: List<String>
+        changedPkgs: List<String>,
+        onRevert: (() -> Unit)? = null
     ) {
-        scope.launch(Dispatchers.IO) {
-            ConfigStore.saveUiPrefsAndSync(
-                context = context,
-                autoHide = newAutoHide,
-                autoHideClone = newAutoHideClone,
-                whitelist = newWl,
-                blacklist = newBl,
-                changedPackages = changedPkgs
-            )
+        scope.launch {
+            val success = withContext(Dispatchers.IO) {
+                syncMutex.withLock {
+                    ConfigStore.saveUiPrefsAndSync(
+                        context = context,
+                        autoHide = newAutoHide,
+                        autoHideClone = newAutoHideClone,
+                        whitelist = newWl,
+                        blacklist = newBl,
+                        changedPackages = changedPkgs
+                    )
+                }
+            }
+            if (!success) {
+                onRevert?.invoke()
+                Toast.makeText(context, strings.syncFailedToast, Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -431,6 +444,9 @@ fun MainScreen(
     }
 
     fun updateAppHidden(entry: AppEntry, hideInLauncher: Boolean) {
+        val prevWl = whitelist
+        val prevBl = blacklist
+
         val newWl = whitelist.toMutableSet()
         val newBl = blacklist.toMutableSet()
         val uKey = entry.uniqueKey
@@ -455,7 +471,15 @@ fun MainScreen(
 
         whitelist = newWl
         blacklist = newBl
-        syncWithSystem(newWl = newWl, newBl = newBl, changedPkgs = listOf(entry.packageName))
+        syncWithSystem(
+            newWl = newWl,
+            newBl = newBl,
+            changedPkgs = listOf(entry.packageName),
+            onRevert = {
+                whitelist = prevWl
+                blacklist = prevBl
+            }
+        )
     }
 
     // SAF File Launchers for JSON Backup Export & Import
@@ -733,16 +757,28 @@ fun MainScreen(
                         isSelfHidden = !whitelist.contains(ConfigStore.SELF_USER0_KEY) &&
                             (autoHideModules || blacklist.contains(ConfigStore.SELF_USER0_KEY)),
                         onToggleAutoHide = { checked ->
+                            val prevAutoHide = autoHideModules
                             autoHideModules = checked
                             val modPkgs = apps.filter { it.isXposedModule }.map { it.packageName }.distinct()
-                            syncWithSystem(newAutoHide = checked, changedPkgs = modPkgs)
+                            syncWithSystem(
+                                newAutoHide = checked,
+                                changedPkgs = modPkgs,
+                                onRevert = { autoHideModules = prevAutoHide }
+                            )
                         },
                         onToggleAutoHideClone = { checked ->
+                            val prevAutoHideClone = autoHideCloneModules
                             autoHideCloneModules = checked
                             val modPkgs = apps.filter { it.isXposedModule && it.userId != 0 }.map { it.packageName }.distinct()
-                            syncWithSystem(newAutoHideClone = checked, changedPkgs = modPkgs)
+                            syncWithSystem(
+                                newAutoHideClone = checked,
+                                changedPkgs = modPkgs,
+                                onRevert = { autoHideCloneModules = prevAutoHideClone }
+                            )
                         },
                         onToggleHideSelf = { hideSelf ->
+                            val prevWl = whitelist
+                            val prevBl = blacklist
                             val newWl = whitelist.toMutableSet()
                             val newBl = blacklist.toMutableSet()
                             if (hideSelf) {
@@ -754,7 +790,15 @@ fun MainScreen(
                             }
                             whitelist = newWl
                             blacklist = newBl
-                            syncWithSystem(newWl = newWl, newBl = newBl, changedPkgs = listOf(ConfigStore.SELF_PACKAGE))
+                            syncWithSystem(
+                                newWl = newWl,
+                                newBl = newBl,
+                                changedPkgs = listOf(ConfigStore.SELF_PACKAGE),
+                                onRevert = {
+                                    whitelist = prevWl
+                                    blacklist = prevBl
+                                }
+                            )
                         },
                         onToggleShowSystemApps = { showSys ->
                             showSystemApps = showSys
