@@ -21,8 +21,9 @@
   - **Tier 1 (Manifest Meta-Data):** `xposedmodule`, `xposedminversion`, `xposeddescription`, `xposedscope`, `libxposed`, `libxposed_minversion`, `libxposed_api`, `libxposed_scope`
   - **Tier 2 (Classic Xposed API):** Fast APK zip central directory inspection for `assets/xposed_init`
   - **Tier 3 (Modern LibXposed API 100):** Fast APK zip central directory inspection for `META-INF/xposed/module.prop`
-- **Caller-Aware Manager Bypass & Cached AppId:**
-  Queries originating from `android`, `XHide`, or protected managers (`LSPosed`, `Vector`, `LSPatch`, `EdXposed`, `KernelSU`, `KSU Next`, `Magisk`, `APatch`) are never filtered. Caller AppId is cached in memory to ensure instantaneous O(1) integer verification without repeated PackageManager IPC.
+  > **Note on Detection & Framework Managers:** Detection relies on standard Xposed manifest meta-data and asset markers. If a third-party application, framework manager, or fork declares these metadata entries, it may be recognized as an Xposed module and automatically hidden when *Auto-Hide Xposed Modules* is active. Users always retain full manual control: explicitly toggling any application off in the XHide companion app immediately whitelists it, overriding automated detection rules.
+- **Caller-Aware Core System Bypass & Cached AppId:**
+  Queries originating from `android` (system_server) or `XHide` itself are never filtered. Caller AppId is cached in memory to ensure instantaneous O(1) integer verification without repeated PackageManager IPC.
 - **Batch Live Launcher Synchronization:**
   Toggling any rule triggers `MyPackageMonitor.onPackageChanged` with batched `IOnAppsChangedListener` callbacks across all user profiles, eliminating broadcast storms.
 - **Fail-Safe Crash Protection & Secure Diagnostics:**
