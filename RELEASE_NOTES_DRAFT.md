@@ -26,3 +26,5 @@ Comprehensive code optimizations, security enhancements, accessibility fixes, an
 * AMOLED Pure Black: Optimized surface containers to absolute black (#000000) for OLED power saving.
 * DayNight Preview Theme: Corrected initial window preview theme to eliminate light mode dark flicker.
 * Configuration Preview: Added confirmation dialogs with valid rule and invalid key counters before importing or resetting configurations.
+* Interface Streamlining: Replaced cluttered top app bar with native One UI large typography headers across Home, Apps, and Settings tabs; moved manual refresh to the Apps search bar alongside existing pull-to-refresh.
+* Responsive Information Layout: Refactored CompactInfoRow from horizontal Row to vertical Column to prevent text squeezing on long values.
