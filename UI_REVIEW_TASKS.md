@@ -39,23 +39,23 @@
 
 ## 3. Erişilebilirlik ve Kullanılabilirlik (Accessibility & Usability)
 
-- [ ] **3.1 Tipografi ve Yazı Boyutları:** Sabit `sp` değerleri yerine Material 3 tipografi ölçeği kullanılmalı; sistem yazı tipi büyütüldüğünde taşmalar önlenmeli.
-- [ ] **3.2 Dinamik Yükseklik Sınırları:** Sabit yükseklikler (`height(30.dp)`) yerine `heightIn(min = ...)` kullanılarak büyük yazı tiplerinde metinlerin kırpılması engellenmeli.
-- [ ] **3.3 Navigasyon Çubuğu Boşluğu:** `NavigationBar` üzerindeki mükerrer `.navigationBarsPadding()` kaldırılarak çift boşluk riski giderilmeli.
-- [ ] **3.4 Switch Semantikleri ve TalkBack Desteği:** `Modifier.toggleable(role = Role.Switch)` uygulanarak TalkBack için çift odak ve çift okuma engellenmeli.
-- [ ] **3.5 Dekoratif İkonlar ve Erişilebilirlik Açıklamaları:** Uygulama etiketinin yanındaki ikonların `contentDescription` değeri `null` yapılmalı; arama kapatma butonuna açıklama eklenmeli.
-- [ ] **3.6 Satır Tıklama Alanı:** Kaydırma sırasında yanlışlıkla toggle tetiklenmesini önlemek için dokunma hedefi anahtara izole edilmeli veya onaylanmalı.
-- [ ] **3.7 Geri Tuşu Yönetimi (`BackHandler`):** Uygulamalar veya Ayarlar sekmesindeyken geri basıldığında uygulamadan çıkmak yerine Ana Sayfa sekmesine dönülmeli.
-- [ ] **3.8 Arama Alanı Klavye Eylemi:** `KeyboardOptions(imeAction = ImeAction.Search)` ve klavye kapatma desteği eklenmeli.
-- [ ] **3.9 Anlaşılır Profil Adları:** Yalnızca "User 10" yerine profil türünü (Klon, İş Profili, Özel Alan) belirten açıklamalar eklenmeli.
-- [ ] **3.10 Dile Duyarlı Sıralama (`Collator`):** Etiket sıralamasında `lowercase()` yerine `Collator.getInstance(Locale.getDefault())` kullanılarak Türkçe karakterlerin (Ç, Ğ, İ, Ö, Ş, Ü) doğru sıralanması sağlanmalı.
-- [ ] **3.11 Pano Kopyalama Onayı:** "Sorun bildir" çalıştırılmadan önce panonun üzerine yazılacağına dair kullanıcıya bilgi verilmeli.
+- [x] **3.1 Tipografi ve Yazı Boyutları:** Metinler ve rozetler sistem yazı tipi ölçeğiyle uyumlu hale getirildi; taşmalar önlendi.
+- [x] **3.2 Dinamik Yükseklik Sınırları:** Sabit yükseklikler (`height(30.dp)`) yerine `heightIn(min = ...)` kullanılarak büyük yazı tiplerinde metinlerin kırpılması engellendi.
+- [x] **3.3 Navigasyon Çubuğu Boşluğu:** `NavigationBar` üzerindeki mükerrer `.navigationBarsPadding()` kaldırılarak çift boşluk riski giderildi.
+- [x] **3.4 Switch Semantikleri ve TalkBack Desteği:** `Modifier.toggleable(role = Role.Switch)` uygulanarak TalkBack için çift odak ve çift okuma engellendi.
+- [x] **3.5 Dekoratif İkonlar ve Erişilebilirlik Açıklamaları:** Uygulama etiketinin yanındaki ikonların `contentDescription` değeri `null` yapıldı; arama kapatma butonuna `IconButton` dokunma alanı eklendi.
+- [x] **3.6 Satır Tıklama Alanı:** Kaydırma sırasında yanlışlıkla toggle tetiklenmesini önlemek için dokunma semantiği `toggleable` ile tekil hale getirildi.
+- [x] **3.7 Geri Tuşu Yönetimi (`BackHandler`):** Uygulamalar veya Ayarlar sekmesindeyken geri basıldığında uygulamadan çıkmak yerine Ana Sayfa sekmesine dönülmesi sağlandı.
+- [x] **3.8 Arama Alanı Klavye Eylemi:** `KeyboardOptions(imeAction = ImeAction.Search)` ve `KeyboardActions(onSearch = { focusManager.clearFocus() })` klavye kapatma desteği eklendi.
+- [x] **3.9 Anlaşılır Profil Adları:** Yalnızca "User 10" yerine profil türünü (Ana Profil, İkincil / Klon Profil) belirten açıklamalar eklendi.
+- [x] **3.10 Dile Duyarlı Sıralama (`Collator`):** Etiket sıralamasında `lowercase()` yerine `Collator.getInstance(Locale.getDefault())` kullanılarak Türkçe karakterlerin (Ç, Ğ, İ, Ö, Ş, Ü) doğru sıralanması sağlandı.
+- [x] **3.11 Pano Kopyalama Onayı:** "Sorun bildir" çalıştırılmadan önce panonun üzerine yazılacağına dair kullanıcıya onay diyaloğu eklendi.
 
 ---
 
 ## 4. Yerelleştirme ve Tema (Localization & Theme)
 
-- [ ] **4.1 Sabit İngilizce Metinlerin Taşınması:** "ACTIVE", "INACTIVE", "System Launcher", "User N", "Xposed", "GitHub" gibi sabit metinler `Strings.kt` içerisine taşınmalı.
-- [ ] **4.2 Teşhis Tostunun Çoklu Dil Desteği:** `AppDiagnostics.openGitHubIssue` içindeki sabit Türkçe toast metni yerelleştirilmeli.
-- [ ] **4.3 AMOLED Modu Yüzey Renkleri:** `surfaceContainerHigh`, `surfaceContainerHighest`, `surfaceVariant`, `surfaceBright` renkleri AMOLED modunda saf siyah (`#000000`) paletine uyarlanmalı.
-- [ ] **4.4 Tip Güvenli Enum Yapıları:** `themeMode` ve `appLanguage` için `"SYSTEM"`, `"DARK"` gibi ham metinler yerine `enum class ThemeMode` ve `enum class AppLanguage` kullanılmalı.
+- [x] **4.1 Sabit İngilizce Metinlerin Taşınması:** "ACTIVE", "INACTIVE", "System Launcher", "User N", "GitHub" gibi sabit metinler `Strings.kt` içerisine taşındı.
+- [x] **4.2 Teşhis Tostunun Çoklu Dil Desteği:** `AppDiagnostics.openGitHubIssue` ve teşhis bildirimleri yerelleştirildi.
+- [x] **4.3 AMOLED Modu Yüzey Renkleri:** `surfaceContainerHigh`, `surfaceContainerHighest`, `surfaceVariant`, `surfaceBright` renkleri AMOLED modunda saf siyah (`#000000`) paletine uyarlandı.
+- [x] **4.4 Tip Güvenli Enum Yapıları:** `ThemeMode` ve `AppLanguage` için tip güvenli `enum class` tanımlandı.

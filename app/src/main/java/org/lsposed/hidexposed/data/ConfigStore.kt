@@ -13,6 +13,31 @@ import java.io.File
  *
  * Supports both per-user keys (`"userId:packageName"`, e.g. `"10:com.discord"`) and global package keys.
  */
+enum class ThemeMode(val code: String) {
+    SYSTEM("SYSTEM"),
+    DARK("DARK"),
+    LIGHT("LIGHT");
+
+    companion object {
+        fun fromCode(code: String?): ThemeMode =
+            entries.firstOrNull { it.code.equals(code, ignoreCase = true) } ?: SYSTEM
+    }
+}
+
+enum class AppLanguage(val code: String) {
+    SYSTEM("SYSTEM"),
+    EN("EN"),
+    TR("TR"),
+    DE("DE"),
+    RU("RU"),
+    ZH("ZH");
+
+    companion object {
+        fun fromCode(code: String?): AppLanguage =
+            entries.firstOrNull { it.code.equals(code, ignoreCase = true) } ?: SYSTEM
+    }
+}
+
 object ConfigStore {
     const val SELF_PACKAGE = "org.lsposed.hidexposed"
     const val SELF_USER0_KEY = "0:$SELF_PACKAGE"

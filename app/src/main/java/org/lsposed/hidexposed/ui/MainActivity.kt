@@ -18,6 +18,7 @@ import android.os.UserHandle
 import android.os.UserManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -40,7 +41,10 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -55,6 +59,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -356,6 +364,10 @@ fun MainScreen(
     val homeScrollState = rememberScrollState()
     val appsListState = rememberLazyListState()
     val settingsScrollState = rememberScrollState()
+
+    BackHandler(enabled = currentTab != MainTab.HOME) {
+        currentTab = MainTab.HOME
+    }
 
     LaunchedEffect(searchQuery) {
         if (searchQuery.isEmpty()) {
@@ -779,8 +791,8 @@ fun MainScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = statusBarPadding.calculateTopPadding())
-                        .height(48.dp)
-                        .padding(horizontal = 16.dp),
+                        .heightIn(min = 48.dp)
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -830,9 +842,7 @@ fun MainScreen(
         },
         bottomBar = {
             NavigationBar(
-                modifier = Modifier
-                    .navigationBarsPadding()
-                    .height(64.dp),
+                modifier = Modifier.heightIn(min = 64.dp),
                 tonalElevation = 3.dp
             ) {
                 NavigationBarItem(
@@ -1008,6 +1018,14 @@ fun MainScreen(
     }
 }
 
+private fun formatUserProfileName(userId: Int, strings: AppStrings): String {
+    return when (userId) {
+        0 -> strings.userMainProfile
+        10 -> strings.userCloneProfile
+        else -> String.format(java.util.Locale.getDefault(), strings.userProfileFormat, userId)
+    }
+}
+
 @Composable
 private fun HomeTabScreen(
     strings: AppStrings,
@@ -1140,7 +1158,7 @@ private fun HomeTabScreen(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            val profileSummary = availableUserIds.joinToString(" · ") { "User $it" }
+            val profileSummary = availableUserIds.joinToString(" · ") { formatUserProfileName(it, strings) }
             DashboardStatCard(
                 modifier = Modifier.weight(1f),
                 title = strings.statActiveProfiles,
@@ -1189,7 +1207,7 @@ private fun HomeTabScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = defaultLauncher?.label ?: "System Launcher",
+                        text = defaultLauncher?.label ?: strings.defaultSystemLauncher,
                         fontSize = 13.5.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
@@ -1465,10 +1483,13 @@ private fun AppsTabScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    val focusManager = LocalFocusManager.current
                     BasicTextField(
                         value = searchQuery,
                         onValueChange = onSearchChange,
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
                         textStyle = TextStyle(
                             color = MaterialTheme.colorScheme.onSurface,
                             fontSize = 12.5.sp
@@ -1478,14 +1499,20 @@ private fun AppsTabScreen(
                     )
                 }
                 if (searchQuery.isNotEmpty()) {
-                    Text(
-                        text = "✕",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .clickable { onSearchChange("") }
-                            .padding(4.dp)
-                    )
+                    val focusManager = LocalFocusManager.current
+                    IconButton(
+                        onClick = {
+                            onSearchChange("")
+                            focusManager.clearFocus()
+                        },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Text(
+                            text = "✕",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }
@@ -1518,7 +1545,7 @@ private fun AppsTabScreen(
                 val countForUser = userCounts[uid] ?: 0
                 CompactFilterChip(
                     selected = (filterMode as? FilterMode.ByUser)?.userId == uid,
-                    label = "User $uid ($countForUser)",
+                    label = "${formatUserProfileName(uid, strings)} ($countForUser)",
                     onClick = { onFilterModeChange(FilterMode.ByUser(uid)) }
                 )
             }
@@ -1565,7 +1592,11 @@ private fun AppItemRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .clickable { onToggle(!isHidden) },
+            .toggleable(
+                value = isHidden,
+                role = Role.Switch,
+                onValueChange = onToggle
+            ),
         shape = RoundedCornerShape(10.dp),
         tonalElevation = 1.dp
     ) {
@@ -1615,7 +1646,7 @@ private fun AppItemRow(
                     if (entry.userId != 0) {
                         Spacer(modifier = Modifier.width(5.dp))
                         MiniBadge(
-                            text = "User ${entry.userId}",
+                            text = formatUserProfileName(entry.userId, strings),
                             containerColor = MaterialTheme.colorScheme.tertiaryContainer,
                             contentColor = MaterialTheme.colorScheme.onTertiaryContainer
                         )
@@ -1650,7 +1681,7 @@ private fun AppItemRow(
 
             Switch(
                 checked = isHidden,
-                onCheckedChange = onToggle,
+                onCheckedChange = null,
                 modifier = Modifier.scale(0.95f)
             )
         }
@@ -1667,7 +1698,7 @@ private fun CompactFilterChip(
         selected = selected,
         onClick = onClick,
         label = { Text(label, fontSize = 11.5.sp) },
-        modifier = Modifier.height(30.dp)
+        modifier = Modifier.heightIn(min = 32.dp)
     )
 }
 
@@ -1724,6 +1755,33 @@ private fun SettingsTabScreen(
     }
 
     var localUiScale by remember(uiScale) { mutableFloatStateOf(uiScale) }
+    var showReportConfirmDialog by remember { mutableStateOf(false) }
+
+    if (showReportConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showReportConfirmDialog = false },
+            title = { Text(text = strings.reportIssueTitle, fontWeight = FontWeight.Bold) },
+            text = { Text(text = strings.reportIssueConfirmDesc) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showReportConfirmDialog = false
+                        AppDiagnostics.openGitHubIssue(
+                            context = context,
+                            isHookActive = isHookActive == true
+                        )
+                    }
+                ) {
+                    Text(text = strings.reportIssueConfirmBtn, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showReportConfirmDialog = false }) {
+                    Text(text = strings.dismissBtn)
+                }
+            }
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -1988,12 +2046,7 @@ private fun SettingsTabScreen(
             CompactActionRow(
                 title = strings.reportIssueTitle,
                 subtitle = strings.reportIssueDesc,
-                onClick = {
-                    AppDiagnostics.openGitHubIssue(
-                        context = context,
-                        isHookActive = isHookActive == true
-                    )
-                }
+                onClick = { showReportConfirmDialog = true }
             )
         }
 
@@ -2042,7 +2095,12 @@ private fun CompactSwitchRow(
         modifier = Modifier
             .fillMaxWidth()
             .alpha(if (enabled) 1f else 0.42f)
-            .clickable(enabled = enabled) { onCheckedChange(!checked) }
+            .toggleable(
+                value = checked,
+                enabled = enabled,
+                role = Role.Switch,
+                onValueChange = onCheckedChange
+            )
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -2063,7 +2121,7 @@ private fun CompactSwitchRow(
         Switch(
             checked = checked,
             enabled = enabled,
-            onCheckedChange = onCheckedChange,
+            onCheckedChange = null,
             modifier = Modifier.scale(0.95f)
         )
     }
@@ -2302,10 +2360,13 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
         )
     }
 
+    val collator = java.text.Collator.getInstance(java.util.Locale.getDefault()).apply {
+        strength = java.text.Collator.PRIMARY
+    }
     return entriesMap.values.sortedWith(
         compareByDescending<AppEntry> { it.isXposedModule }
             .thenBy { it.userId }
-            .thenBy { it.label.lowercase() }
+            .thenComparing { a, b -> collator.compare(a.label, b.label) }
     )
 }
 
