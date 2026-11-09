@@ -14,9 +14,10 @@ By intercepting launcher queries at `LauncherAppsService`, XHide removes icons f
 - **Multi-Profile Support:** Manages visibility rules independently across user profiles, including Work Profiles, Clone/Dual Apps, Secure Folder, and Android 15+ Private Space.
 - **Immediate Launcher Updates:** Notifies active launchers via system package callbacks when visibility toggles change, applying changes without requiring a device or launcher restart.
 - **Companion Application:**
-  - Material 3 interface with per-profile filtering tabs.
-  - Backup and restore settings via Storage Access Framework (SAF).
-  - Dynamic color support and AMOLED dark theme.
+  - Material 3 interface with per-profile filtering tabs (`User 0`, `User 10`, etc.).
+  - Smart package filtering: Headless hook modules without launcher icons are organized under system components to keep the main list clean.
+  - Backup and restore configuration via Storage Access Framework (SAF).
+  - Dynamic Material You colors, AMOLED dark theme, and fine-grained UI scaling (90%–115%).
   - Multi-language support: English, Turkish, German, Russian, and Simplified Chinese.
 
 ---
