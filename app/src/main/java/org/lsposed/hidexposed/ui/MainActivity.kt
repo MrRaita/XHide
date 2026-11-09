@@ -899,8 +899,6 @@ fun MainScreen(
                         autoHideModules = autoHideModules,
                         autoHideCloneModules = autoHideCloneModules,
                         showSystemApps = showSystemApps,
-                        isSelfHidden = !whitelist.contains(ConfigStore.SELF_USER0_KEY) &&
-                            (autoHideModules || blacklist.contains(ConfigStore.SELF_USER0_KEY)),
                         scrollState = settingsScrollState,
                         onToggleAutoHide = { checked ->
                             val prevAutoHide = autoHideModules
@@ -920,30 +918,6 @@ fun MainScreen(
                                 newAutoHideClone = checked,
                                 changedPkgs = modPkgs,
                                 onRevert = { autoHideCloneModules = prevAutoHideClone }
-                            )
-                        },
-                        onToggleHideSelf = { hideSelf ->
-                            val prevWl = whitelist
-                            val prevBl = blacklist
-                            val newWl = whitelist.toMutableSet()
-                            val newBl = blacklist.toMutableSet()
-                            if (hideSelf) {
-                                newWl.remove(ConfigStore.SELF_USER0_KEY)
-                                newBl.add(ConfigStore.SELF_USER0_KEY)
-                            } else {
-                                newBl.remove(ConfigStore.SELF_USER0_KEY)
-                                newWl.add(ConfigStore.SELF_USER0_KEY)
-                            }
-                            whitelist = newWl
-                            blacklist = newBl
-                            syncWithSystem(
-                                newWl = newWl,
-                                newBl = newBl,
-                                changedPkgs = listOf(ConfigStore.SELF_PACKAGE),
-                                onRevert = {
-                                    whitelist = prevWl
-                                    blacklist = prevBl
-                                }
                             )
                         },
                         onToggleShowSystemApps = { showSys ->
@@ -1729,10 +1703,8 @@ private fun SettingsTabScreen(
     autoHideModules: Boolean,
     autoHideCloneModules: Boolean,
     showSystemApps: Boolean,
-    isSelfHidden: Boolean,
     onToggleAutoHide: (Boolean) -> Unit,
     onToggleAutoHideClone: (Boolean) -> Unit,
-    onToggleHideSelf: (Boolean) -> Unit,
     onToggleShowSystemApps: (Boolean) -> Unit,
     onUpdateAppearance: (String, String, Boolean, Boolean, Float) -> Unit,
     onRequestExportFile: () -> Unit,
@@ -1803,13 +1775,6 @@ private fun SettingsTabScreen(
                 subtitle = strings.autoHideCloneDesc,
                 checked = autoHideCloneModules,
                 onCheckedChange = onToggleAutoHideClone
-            )
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
-            CompactSwitchRow(
-                title = strings.hideSelfTitle,
-                subtitle = strings.hideSelfDesc,
-                checked = isSelfHidden,
-                onCheckedChange = onToggleHideSelf
             )
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
             CompactSwitchRow(
