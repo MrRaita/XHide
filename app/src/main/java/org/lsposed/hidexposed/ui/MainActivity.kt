@@ -906,8 +906,6 @@ fun MainScreen(
                             },
                             isEntryHidden = isHiddenPredicate,
                             listState = appsListState,
-                            isRefreshing = isRefreshing,
-                            onRefresh = { refreshState(showToastOnDone = true) },
                             onToggleAppHidden = { entry, hide ->
                                 updateAppHidden(entry, hide)
                             }
@@ -1382,8 +1380,6 @@ private fun AppsTabScreen(
     onSortModeChange: (AppSortMode) -> Unit,
     isEntryHidden: (AppEntry) -> Boolean,
     listState: LazyListState,
-    isRefreshing: Boolean = false,
-    onRefresh: () -> Unit,
     onToggleAppHidden: (AppEntry, Boolean) -> Unit
 ) {
     val filteredApps = remember(
@@ -1478,7 +1474,7 @@ private fun AppsTabScreen(
             modifier = Modifier.padding(start = 2.dp, top = 4.dp, bottom = 6.dp)
         )
 
-        // Compact Search Bar (38dp height) & Refresh Button
+        // Compact Search Bar (38dp height) & Filter/Sort Button
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
@@ -1628,20 +1624,6 @@ private fun AppsTabScreen(
                             sortMenuExpanded = false
                         }
                     )
-                }
-            }
-            Spacer(modifier = Modifier.width(6.dp))
-            Surface(
-                modifier = Modifier.size(38.dp),
-                shape = RoundedCornerShape(10.dp),
-                tonalElevation = 2.dp
-            ) {
-                IconButton(
-                    onClick = onRefresh,
-                    enabled = !isRefreshing,
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    RefreshVectorIcon(isRefreshing = isRefreshing)
                 }
             }
         }
@@ -2665,33 +2647,6 @@ private fun SettingsVectorIcon() {
         drawLine(color, Offset(w * 0.15f, h * 0.75f), Offset(w * 0.85f, h * 0.75f), strokeWidth = stroke.width, cap = StrokeCap.Round)
         drawCircle(color, radius = 2.4.dp.toPx(), center = Offset(w * 0.42f, h * 0.75f))
     }
-}
-
-@Composable
-private fun RefreshVectorIcon(
-    modifier: Modifier = Modifier,
-    isRefreshing: Boolean = false
-) {
-    val infiniteTransition = rememberInfiniteTransition(label = "refresh_spin")
-    val spinAngle by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 600, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "refresh_angle"
-    )
-    val rotationAngle = if (isRefreshing) spinAngle else 0f
-
-    Icon(
-        painter = painterResource(id = org.lsposed.hidexposed.R.drawable.ic_refresh),
-        contentDescription = "Refresh",
-        modifier = modifier
-            .size(20.dp)
-            .rotate(rotationAngle),
-        tint = MaterialTheme.colorScheme.onSurfaceVariant
-    )
 }
 
 @Composable
