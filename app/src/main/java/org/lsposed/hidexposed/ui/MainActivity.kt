@@ -68,6 +68,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -143,6 +145,7 @@ import org.json.JSONObject
 import org.lsposed.hidexposed.BuildConfig
 import org.lsposed.hidexposed.core.AppDiagnostics
 import org.lsposed.hidexposed.core.ModuleCache
+import org.lsposed.hidexposed.data.AppSortMode
 import org.lsposed.hidexposed.data.ConfigStore
 import org.lsposed.hidexposed.ui.theme.HideXposedTheme
 import android.util.LruCache
@@ -220,6 +223,7 @@ data class AppEntry(
     val label: String,
     val isXposedModule: Boolean,
     val isSystemApp: Boolean,
+    val firstInstallTime: Long = 0L,
     val lastUpdateTime: Long = 0L,
     val hasLauncherIcon: Boolean = true
 ) {
@@ -369,6 +373,7 @@ fun MainScreen(
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var debouncedQuery by rememberSaveable { mutableStateOf("") }
     var filterMode by remember { mutableStateOf<FilterMode>(FilterMode.AllApps) }
+    var sortMode by remember { mutableStateOf(ConfigStore.appSortMode) }
 
     val homeScrollState = rememberScrollState()
     val appsListState = rememberLazyListState()
@@ -894,6 +899,11 @@ fun MainScreen(
                             onSearchChange = { searchQuery = it },
                             filterMode = filterMode,
                             onFilterModeChange = { filterMode = it },
+                            sortMode = sortMode,
+                            onSortModeChange = { newMode ->
+                                sortMode = newMode
+                                ConfigStore.saveSortMode(context, newMode)
+                            },
                             isEntryHidden = isHiddenPredicate,
                             listState = appsListState,
                             isRefreshing = isRefreshing,
@@ -1368,6 +1378,8 @@ private fun AppsTabScreen(
     onSearchChange: (String) -> Unit,
     filterMode: FilterMode,
     onFilterModeChange: (FilterMode) -> Unit,
+    sortMode: AppSortMode,
+    onSortModeChange: (AppSortMode) -> Unit,
     isEntryHidden: (AppEntry) -> Boolean,
     listState: LazyListState,
     isRefreshing: Boolean = false,
@@ -1378,6 +1390,7 @@ private fun AppsTabScreen(
         apps,
         debouncedQuery,
         filterMode,
+        sortMode,
         showSystemApps,
         autoHideModules,
         autoHideCloneModules,
@@ -1386,6 +1399,38 @@ private fun AppsTabScreen(
     ) {
         val collator = java.text.Collator.getInstance().apply {
             strength = java.text.Collator.PRIMARY
+        }
+        val comparator = when (sortMode) {
+            AppSortMode.NAME_ASC -> {
+                compareByDescending<AppEntry> { isEntryHidden(it) }
+                    .thenByDescending { it.isXposedModule }
+                    .thenBy { it.userId }
+                    .thenComparing { a, b -> collator.compare(a.label, b.label) }
+            }
+            AppSortMode.NAME_DESC -> {
+                compareByDescending<AppEntry> { isEntryHidden(it) }
+                    .thenByDescending { it.isXposedModule }
+                    .thenBy { it.userId }
+                    .thenComparing { a, b -> collator.compare(b.label, a.label) }
+            }
+            AppSortMode.INSTALL_DATE_DESC -> {
+                compareByDescending<AppEntry> { isEntryHidden(it) }
+                    .thenByDescending { it.firstInstallTime }
+                    .thenBy { it.userId }
+                    .thenComparing { a, b -> collator.compare(a.label, b.label) }
+            }
+            AppSortMode.INSTALL_DATE_ASC -> {
+                compareByDescending<AppEntry> { isEntryHidden(it) }
+                    .thenBy { it.firstInstallTime }
+                    .thenBy { it.userId }
+                    .thenComparing { a, b -> collator.compare(a.label, b.label) }
+            }
+            AppSortMode.UPDATE_DATE_DESC -> {
+                compareByDescending<AppEntry> { isEntryHidden(it) }
+                    .thenByDescending { it.lastUpdateTime }
+                    .thenBy { it.userId }
+                    .thenComparing { a, b -> collator.compare(a.label, b.label) }
+            }
         }
         apps.filter { app ->
             val allowSystem = showSystemApps || (!app.isSystemApp && app.hasLauncherIcon) || (app.userId != 0 && app.hasLauncherIcon)
@@ -1399,12 +1444,7 @@ private fun AppsTabScreen(
                 app.label.contains(debouncedQuery, ignoreCase = true) ||
                 app.packageName.contains(debouncedQuery, ignoreCase = true)
             matchesMode && matchesQuery
-        }.sortedWith(
-            compareByDescending<AppEntry> { isEntryHidden(it) }
-                .thenByDescending { it.isXposedModule }
-                .thenBy { it.userId }
-                .thenComparing { a, b -> collator.compare(a.label, b.label) }
-        )
+        }.sortedWith(comparator)
     }
 
     val allCount = remember(apps, showSystemApps) {
@@ -1499,7 +1539,98 @@ private fun AppsTabScreen(
                     }
                 }
             }
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            var sortMenuExpanded by remember { mutableStateOf(false) }
+            Box {
+                Surface(
+                    modifier = Modifier.size(38.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    tonalElevation = 2.dp
+                ) {
+                    IconButton(
+                        onClick = { sortMenuExpanded = true },
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        Icon(
+                            painter = painterResource(id = org.lsposed.hidexposed.R.drawable.ic_sort),
+                            contentDescription = strings.sortTitle,
+                            tint = if (sortMode != AppSortMode.NAME_ASC) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                DropdownMenu(
+                    expanded = sortMenuExpanded,
+                    onDismissRequest = { sortMenuExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = strings.sortNameAsc,
+                                fontWeight = if (sortMode == AppSortMode.NAME_ASC) FontWeight.Bold else FontWeight.Normal,
+                                color = if (sortMode == AppSortMode.NAME_ASC) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
+                        },
+                        onClick = {
+                            onSortModeChange(AppSortMode.NAME_ASC)
+                            sortMenuExpanded = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = strings.sortNameDesc,
+                                fontWeight = if (sortMode == AppSortMode.NAME_DESC) FontWeight.Bold else FontWeight.Normal,
+                                color = if (sortMode == AppSortMode.NAME_DESC) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
+                        },
+                        onClick = {
+                            onSortModeChange(AppSortMode.NAME_DESC)
+                            sortMenuExpanded = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = strings.sortInstallDateDesc,
+                                fontWeight = if (sortMode == AppSortMode.INSTALL_DATE_DESC) FontWeight.Bold else FontWeight.Normal,
+                                color = if (sortMode == AppSortMode.INSTALL_DATE_DESC) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
+                        },
+                        onClick = {
+                            onSortModeChange(AppSortMode.INSTALL_DATE_DESC)
+                            sortMenuExpanded = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = strings.sortInstallDateAsc,
+                                fontWeight = if (sortMode == AppSortMode.INSTALL_DATE_ASC) FontWeight.Bold else FontWeight.Normal,
+                                color = if (sortMode == AppSortMode.INSTALL_DATE_ASC) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
+                        },
+                        onClick = {
+                            onSortModeChange(AppSortMode.INSTALL_DATE_ASC)
+                            sortMenuExpanded = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = strings.sortUpdateDateDesc,
+                                fontWeight = if (sortMode == AppSortMode.UPDATE_DATE_DESC) FontWeight.Bold else FontWeight.Normal,
+                                color = if (sortMode == AppSortMode.UPDATE_DATE_DESC) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
+                        },
+                        onClick = {
+                            onSortModeChange(AppSortMode.UPDATE_DATE_DESC)
+                            sortMenuExpanded = false
+                        }
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(6.dp))
             Surface(
                 modifier = Modifier.size(38.dp),
                 shape = RoundedCornerShape(10.dp),
@@ -1571,6 +1702,7 @@ private fun AppsTabScreen(
                         entry = entry,
                         isHidden = isEntryHidden(entry),
                         strings = strings,
+                        sortMode = sortMode,
                         modifier = Modifier.animateItem(),
                         onToggle = { hide -> onToggleAppHidden(entry, hide) }
                     )
@@ -1585,6 +1717,7 @@ private fun AppItemRow(
     entry: AppEntry,
     isHidden: Boolean,
     strings: AppStrings,
+    sortMode: AppSortMode = AppSortMode.NAME_ASC,
     modifier: Modifier = Modifier,
     onToggle: (Boolean) -> Unit
 ) {
@@ -1675,8 +1808,25 @@ private fun AppItemRow(
                         )
                     }
                 }
+                val dateInfo = remember(entry, sortMode) {
+                    when (sortMode) {
+                        AppSortMode.INSTALL_DATE_DESC, AppSortMode.INSTALL_DATE_ASC -> {
+                            if (entry.firstInstallTime > 0L) {
+                                val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+                                sdf.format(java.util.Date(entry.firstInstallTime))
+                            } else null
+                        }
+                        AppSortMode.UPDATE_DATE_DESC -> {
+                            if (entry.lastUpdateTime > 0L) {
+                                val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+                                sdf.format(java.util.Date(entry.lastUpdateTime))
+                            } else null
+                        }
+                        else -> null
+                    }
+                }
                 Text(
-                    text = entry.packageName,
+                    text = if (dateInfo != null) "${entry.packageName} · $dateInfo" else entry.packageName,
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -2269,11 +2419,13 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
                 pkg
             }
 
-            val updateTime = try {
-                pm.getPackageInfo(pkg, 0).lastUpdateTime
+            val pkgInfo = try {
+                pm.getPackageInfo(pkg, 0)
             } catch (_: Throwable) {
-                0L
+                null
             }
+            val firstInstallTime = pkgInfo?.firstInstallTime ?: 0L
+            val updateTime = pkgInfo?.lastUpdateTime ?: firstInstallTime
 
             entriesMap[key] = AppEntry(
                 userId = userId,
@@ -2281,6 +2433,7 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
                 label = label,
                 isXposedModule = isXposed,
                 isSystemApp = isSystem,
+                firstInstallTime = firstInstallTime,
                 lastUpdateTime = updateTime,
                 hasLauncherIcon = true
             )
@@ -2322,11 +2475,13 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
             pkg
         }
 
-        val updateTime = try {
-            pm.getPackageInfo(pkg, 0).lastUpdateTime
+        val pkgInfo = try {
+            pm.getPackageInfo(pkg, 0)
         } catch (_: Throwable) {
-            0L
+            null
         }
+        val firstInstallTime = pkgInfo?.firstInstallTime ?: 0L
+        val updateTime = pkgInfo?.lastUpdateTime ?: firstInstallTime
 
         // Iconless / headless modules (pure hooks) are classified as system-level components
         entriesMap[key] = AppEntry(
@@ -2335,6 +2490,7 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
             label = label,
             isXposedModule = true,
             isSystemApp = isSystem || !hasLauncherIntent,
+            firstInstallTime = firstInstallTime,
             lastUpdateTime = updateTime,
             hasLauncherIcon = hasLauncherIntent
         )

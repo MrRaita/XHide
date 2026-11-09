@@ -38,6 +38,19 @@ enum class AppLanguage(val code: String) {
     }
 }
 
+enum class AppSortMode(val code: String) {
+    NAME_ASC("NAME_ASC"),
+    NAME_DESC("NAME_DESC"),
+    INSTALL_DATE_DESC("INSTALL_DATE_DESC"),
+    INSTALL_DATE_ASC("INSTALL_DATE_ASC"),
+    UPDATE_DATE_DESC("UPDATE_DATE_DESC");
+
+    companion object {
+        fun fromCode(code: String?): AppSortMode =
+            entries.firstOrNull { it.code.equals(code, ignoreCase = true) } ?: NAME_ASC
+    }
+}
+
 object ConfigStore {
     const val SELF_PACKAGE = "org.lsposed.hidexposed"
     const val SELF_USER0_KEY = "0:$SELF_PACKAGE"
@@ -87,6 +100,10 @@ object ConfigStore {
 
     @Volatile
     var uiScale: Float = 1.0f
+        private set
+
+    @Volatile
+    var appSortMode: AppSortMode = AppSortMode.NAME_ASC
         private set
 
     // Lock-free, zero-race atomic set references for system_server Binder threads
@@ -283,6 +300,7 @@ object ConfigStore {
         dynamicColor = prefs.getBoolean("dynamicColor", true)
         showSystemApps = prefs.getBoolean("showSystemApps", true)
         uiScale = prefs.getFloat("uiScale", 1.0f).coerceIn(0.90f, 1.50f)
+        appSortMode = AppSortMode.fromCode(prefs.getString("appSortMode", "NAME_ASC"))
 
         val rawBl = prefs.getStringSet("blacklist", emptySet()) ?: emptySet()
         val isSelfBlacklisted = rawBl.contains(SELF_USER0_KEY) || rawBl.contains(SELF_PACKAGE)
@@ -321,6 +339,13 @@ object ConfigStore {
             .putBoolean("dynamicColor", dynamic)
             .putBoolean("showSystemApps", showSystem)
             .putFloat("uiScale", uiScale)
+            .apply()
+    }
+
+    fun saveSortMode(context: Context, mode: AppSortMode) {
+        appSortMode = mode
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putString("appSortMode", mode.code)
             .apply()
     }
 
