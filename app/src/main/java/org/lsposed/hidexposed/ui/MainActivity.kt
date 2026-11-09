@@ -1384,6 +1384,9 @@ private fun AppsTabScreen(
         whitelist,
         blacklist
     ) {
+        val collator = java.text.Collator.getInstance().apply {
+            strength = java.text.Collator.PRIMARY
+        }
         apps.filter { app ->
             val allowSystem = showSystemApps || (!app.isSystemApp && app.hasLauncherIcon) || (app.userId != 0 && app.hasLauncherIcon)
             val matchesMode = when (val mode = filterMode) {
@@ -1396,7 +1399,12 @@ private fun AppsTabScreen(
                 app.label.contains(debouncedQuery, ignoreCase = true) ||
                 app.packageName.contains(debouncedQuery, ignoreCase = true)
             matchesMode && matchesQuery
-        }
+        }.sortedWith(
+            compareByDescending<AppEntry> { isEntryHidden(it) }
+                .thenByDescending { it.isXposedModule }
+                .thenBy { it.userId }
+                .thenComparing { a, b -> collator.compare(a.label, b.label) }
+        )
     }
 
     val allCount = remember(apps, showSystemApps) {
@@ -1563,6 +1571,7 @@ private fun AppsTabScreen(
                         entry = entry,
                         isHidden = isEntryHidden(entry),
                         strings = strings,
+                        modifier = Modifier.animateItem(),
                         onToggle = { hide -> onToggleAppHidden(entry, hide) }
                     )
                 }
@@ -1576,10 +1585,11 @@ private fun AppItemRow(
     entry: AppEntry,
     isHidden: Boolean,
     strings: AppStrings,
+    modifier: Modifier = Modifier,
     onToggle: (Boolean) -> Unit
 ) {
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .toggleable(
