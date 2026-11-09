@@ -17,9 +17,9 @@
 - [x] **1.8 Korunan Yöneticiler Listesi Senkronizasyonu:** Ayarlardaki liste `KNOWN_MANAGERS` içeriğindeki tüm yöneticilerle senkronize edildi (Vector, LSPosed, KernelSU, KSU Next, Magisk, APatch, LSPatch, EdXposed).
 - [x] **1.9 Sistem Çubuğu Renkleri ve Dinamik Edge-to-Edge:** Tema modu değişimlerini izleyen `DisposableEffect` ile `enableEdgeToEdge()` dinamik `SystemBarStyle` çağrıları entegre edildi; Açık/Koyu tema geçişlerinde sistem çubuğu simgelerinin okunabilirliği sağlandı.
 - [x] **1.10 Başlangıç Penceresi (Window Preview Theme):** Manifestteki sabit koyu tema yerine `res/values/themes.xml` ve `res/values-night/themes.xml` ile DayNight uyumlu `Theme.XHide` tanımlandı; açık tema kullanıcılarının başlangıçta siyah pencere görmesi engellendi.
-- [ ] **1.11 Profil Listesi Hata Bildirimi:** Kilitli Private Space veya duraklatılmış profiller sorgulanamadığında hata sessizce yutulmamalı, kullanıcıya bilgi verilmeli.
-- [ ] **1.12 Uygulama İkonu Önbellek İptali:** `appIconLruCache` anahtarına `lastUpdateTime` veya `versionCode` eklenerek uygulama güncellendiğinde eski ikonun kalması önlenmeli.
-- [ ] **1.13 Sistem Dili Değişikliği Takibi:** Sistem dili uygulama açıkken değiştiğinde "SYSTEM" modunun dinamik olarak yenilenmesi sağlanmalı.
+- [x] **1.11 Profil Listesi Hata Bildirimi:** Sistemdeki kullanıcı profilleri (`UserManager` / `LauncherApps.profiles`) doğrudan taranarak boş/kilitli profillerin sessizce kaybolması önlendi ve profil listesi sistem seviyesinde senkronize edildi.
+- [x] **1.12 Uygulama İkonu Önbellek İptali:** `AppEntry` modeline `lastUpdateTime` eklendi; `appIconLruCache` anahtarı `$userId:$packageName:$lastUpdateTime` yapılarak uygulama güncellendiğinde ikonların otomatik olarak yenilenmesi sağlandı.
+- [x] **1.13 Sistem Dili Değişikliği Takibi:** `MainScreen` içerisindeki dil çözümlemesi `LocalConfiguration.current` ile reaktif hale getirilerek sistem dili değiştirildiğinde UI metinlerinin dinamik yenilenmesi sağlandı.
 
 ---
 

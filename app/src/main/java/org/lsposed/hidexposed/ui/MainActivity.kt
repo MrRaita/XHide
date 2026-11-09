@@ -83,6 +83,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import kotlin.math.roundToInt
@@ -133,9 +134,9 @@ private val appIconLruCache = object : LruCache<String, ImageBitmap>(256) {}
 private val xposedAppCache = ConcurrentHashMap<String, Boolean>()
 
 @Composable
-private fun rememberAppIcon(packageName: String, userId: Int): ImageBitmap? {
+private fun rememberAppIcon(packageName: String, userId: Int, lastUpdateTime: Long = 0L): ImageBitmap? {
     val context = LocalContext.current
-    val key = ConfigStore.userKey(userId, packageName)
+    val key = "$userId:$packageName:$lastUpdateTime"
     var bitmap by remember(key) {
         mutableStateOf(synchronized(appIconLruCache) { appIconLruCache.get(key) })
     }
@@ -143,7 +144,7 @@ private fun rememberAppIcon(packageName: String, userId: Int): ImageBitmap? {
     LaunchedEffect(key) {
         if (bitmap == null) {
             val bmp = withContext(Dispatchers.IO) {
-                loadAppIcon(context, packageName, userId)
+                loadAppIcon(context, packageName, userId, lastUpdateTime)
             }
             if (bmp != null) {
                 bitmap = bmp
@@ -153,8 +154,8 @@ private fun rememberAppIcon(packageName: String, userId: Int): ImageBitmap? {
     return bitmap
 }
 
-private fun loadAppIcon(context: Context, packageName: String, userId: Int): ImageBitmap? {
-    val key = ConfigStore.userKey(userId, packageName)
+private fun loadAppIcon(context: Context, packageName: String, userId: Int, lastUpdateTime: Long = 0L): ImageBitmap? {
+    val key = "$userId:$packageName:$lastUpdateTime"
     synchronized(appIconLruCache) {
         val cached = appIconLruCache.get(key)
         if (cached != null) return cached
@@ -197,7 +198,8 @@ data class AppEntry(
     val packageName: String,
     val label: String,
     val isXposedModule: Boolean,
-    val isSystemApp: Boolean
+    val isSystemApp: Boolean,
+    val lastUpdateTime: Long = 0L
 ) {
     val uniqueKey: String get() = ConfigStore.userKey(userId, packageName)
 }
@@ -323,8 +325,9 @@ fun MainScreen(
     onUpdateAppearance: (String, String, Boolean, Boolean, Boolean, Float) -> Unit
 ) {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
     val scope = rememberCoroutineScope()
-    val strings = remember(langCode) { Localization.resolveStrings(langCode) }
+    val strings = remember(langCode, configuration) { Localization.resolveStrings(langCode) }
 
     var currentTab by remember { mutableStateOf(MainTab.HOME) }
     var isHookActive by remember { mutableStateOf<Boolean?>(null) }
@@ -1247,11 +1250,11 @@ private fun HomeTabScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Box {
-                                    val icon = rememberAppIcon(app.packageName, app.userId)
+                                    val icon = rememberAppIcon(app.packageName, app.userId, app.lastUpdateTime)
                                     if (icon != null) {
                                         Image(
                                             bitmap = icon,
-                                            contentDescription = app.label,
+                                            contentDescription = null,
                                             modifier = Modifier
                                                 .size(38.dp)
                                                 .clip(RoundedCornerShape(9.dp))
@@ -1546,11 +1549,11 @@ private fun AppItemRow(
                 .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val icon = rememberAppIcon(entry.packageName, entry.userId)
+            val icon = rememberAppIcon(entry.packageName, entry.userId, entry.lastUpdateTime)
             if (icon != null) {
                 Image(
                     bitmap = icon,
-                    contentDescription = entry.label,
+                    contentDescription = null,
                     modifier = Modifier
                         .size(34.dp)
                         .clip(RoundedCornerShape(8.dp))
@@ -2182,12 +2185,19 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
                 pkg
             }
 
+            val updateTime = try {
+                pm.getPackageInfo(pkg, 0).lastUpdateTime
+            } catch (_: Throwable) {
+                0L
+            }
+
             entriesMap[key] = AppEntry(
                 userId = userId,
                 packageName = pkg,
                 label = label,
                 isXposedModule = isXposed,
-                isSystemApp = isSystem
+                isSystemApp = isSystem,
+                lastUpdateTime = updateTime
             )
         }
     }
@@ -2221,12 +2231,19 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
             pkg
         }
 
+        val updateTime = try {
+            pm.getPackageInfo(pkg, 0).lastUpdateTime
+        } catch (_: Throwable) {
+            0L
+        }
+
         entriesMap[key] = AppEntry(
             userId = 0,
             packageName = pkg,
             label = label,
             isXposedModule = true,
-            isSystemApp = isSystem
+            isSystemApp = isSystem,
+            lastUpdateTime = updateTime
         )
     }
 
