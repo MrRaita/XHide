@@ -92,12 +92,15 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
@@ -199,8 +202,8 @@ private fun loadAppIcon(context: Context, packageName: String, userId: Int, last
             }
         }
         val activities = launcherApps?.getActivityList(packageName, userHandle)
-        val rawDrawable = activities?.firstOrNull()?.getBadgedIcon(0)
-            ?: activities?.firstOrNull()?.getIcon(0)
+        val rawDrawable = activities?.firstOrNull()?.getIcon(0)
+            ?: activities?.firstOrNull()?.getBadgedIcon(0)
             ?: try {
                 context.packageManager.getApplicationInfo(packageName, 0).loadIcon(context.packageManager)
             } catch (_: Throwable) {
@@ -1256,6 +1259,14 @@ private fun HomeTabScreen(
                         items(hiddenApps, key = { it.uniqueKey }) { app ->
                             Column(
                                 modifier = Modifier
+                                    .animateItem(
+                                        fadeInSpec = tween(durationMillis = 180, easing = LinearOutSlowInEasing),
+                                        fadeOutSpec = tween(durationMillis = 150, easing = FastOutLinearInEasing),
+                                        placementSpec = spring(
+                                            dampingRatio = Spring.DampingRatioNoBouncy,
+                                            stiffness = Spring.StiffnessMediumLow
+                                        )
+                                    )
                                     .width(62.dp)
                                     .clip(RoundedCornerShape(10.dp))
                                     .clickable { onToggleAppHidden(app, false) }
@@ -1363,6 +1374,12 @@ private fun DashboardStatCard(
     }
 }
 
+private class AppsListScopeTracker {
+    var prevIndices: Map<String, Int> = emptyMap()
+    var prevHiddenKeys: Set<String> = emptySet()
+    val keyVersions = HashMap<String, Int>()
+}
+
 @Composable
 private fun AppsTabScreen(
     strings: AppStrings,
@@ -1384,58 +1401,94 @@ private fun AppsTabScreen(
     listState: LazyListState,
     onToggleAppHidden: (AppEntry, Boolean) -> Unit
 ) {
-    val filteredApps = remember(
+    val viewScopeKey = remember(filterMode, debouncedQuery, sortMode, showSystemApps) {
+        val filterTag = when (val mode = filterMode) {
+            is FilterMode.AllApps -> "all"
+            is FilterMode.XposedOnly -> "xposed"
+            is FilterMode.HiddenOnly -> "hidden"
+            is FilterMode.ByUser -> "u${mode.userId}"
+        }
+        "${filterTag}_${debouncedQuery}_${sortMode.code}_$showSystemApps"
+    }
+
+    val actualHiddenKeys = remember(apps, autoHideModules, autoHideCloneModules, whitelist, blacklist) {
+        apps.asSequence().filter { isEntryHidden(it) }.mapTo(HashSet()) { it.uniqueKey }
+    }
+
+    var settledHiddenKeys by remember { mutableStateOf(actualHiddenKeys) }
+    var hasInitializedHiddenKeys by remember { mutableStateOf(apps.isNotEmpty()) }
+
+    val effectiveSettledHiddenKeys = if (!hasInitializedHiddenKeys && apps.isNotEmpty()) {
+        actualHiddenKeys
+    } else {
+        settledHiddenKeys
+    }
+
+    LaunchedEffect(actualHiddenKeys, apps.isEmpty()) {
+        if (apps.isEmpty()) {
+            settledHiddenKeys = actualHiddenKeys
+        } else if (!hasInitializedHiddenKeys) {
+            hasInitializedHiddenKeys = true
+            settledHiddenKeys = actualHiddenKeys
+        } else if (settledHiddenKeys != actualHiddenKeys) {
+            delay(190)
+            settledHiddenKeys = actualHiddenKeys
+        }
+    }
+
+    val scopeTracker = remember(viewScopeKey) { AppsListScopeTracker() }
+
+    val (filteredApps, itemKeyVersions) = remember(
         apps,
         debouncedQuery,
         filterMode,
         sortMode,
         showSystemApps,
-        autoHideModules,
-        autoHideCloneModules,
-        whitelist,
-        blacklist
+        effectiveSettledHiddenKeys,
+        viewScopeKey
     ) {
         val collator = java.text.Collator.getInstance().apply {
             strength = java.text.Collator.PRIMARY
         }
+        val isSettledHidden: (AppEntry) -> Boolean = { it.uniqueKey in effectiveSettledHiddenKeys }
         val comparator = when (sortMode) {
             AppSortMode.NAME_ASC -> {
-                compareByDescending<AppEntry> { isEntryHidden(it) }
+                compareByDescending<AppEntry> { isSettledHidden(it) }
                     .thenByDescending { it.isXposedModule }
                     .thenBy { it.userId }
                     .thenComparing { a, b -> collator.compare(a.label, b.label) }
             }
             AppSortMode.NAME_DESC -> {
-                compareByDescending<AppEntry> { isEntryHidden(it) }
+                compareByDescending<AppEntry> { isSettledHidden(it) }
                     .thenByDescending { it.isXposedModule }
                     .thenBy { it.userId }
                     .thenComparing { a, b -> collator.compare(b.label, a.label) }
             }
             AppSortMode.INSTALL_DATE_DESC -> {
-                compareByDescending<AppEntry> { isEntryHidden(it) }
+                compareByDescending<AppEntry> { isSettledHidden(it) }
                     .thenByDescending { it.firstInstallTime }
                     .thenBy { it.userId }
                     .thenComparing { a, b -> collator.compare(a.label, b.label) }
             }
             AppSortMode.INSTALL_DATE_ASC -> {
-                compareByDescending<AppEntry> { isEntryHidden(it) }
+                compareByDescending<AppEntry> { isSettledHidden(it) }
                     .thenBy { it.firstInstallTime }
                     .thenBy { it.userId }
                     .thenComparing { a, b -> collator.compare(a.label, b.label) }
             }
             AppSortMode.UPDATE_DATE_DESC -> {
-                compareByDescending<AppEntry> { isEntryHidden(it) }
+                compareByDescending<AppEntry> { isSettledHidden(it) }
                     .thenByDescending { it.lastUpdateTime }
                     .thenBy { it.userId }
                     .thenComparing { a, b -> collator.compare(a.label, b.label) }
             }
         }
-        apps.filter { app ->
+        val sorted = apps.filter { app ->
             val allowSystem = showSystemApps || (!app.isSystemApp && app.hasLauncherIcon) || (app.userId != 0 && app.hasLauncherIcon)
             val matchesMode = when (val mode = filterMode) {
                 is FilterMode.AllApps -> allowSystem
                 is FilterMode.XposedOnly -> app.isXposedModule && allowSystem
-                is FilterMode.HiddenOnly -> isEntryHidden(app)
+                is FilterMode.HiddenOnly -> isSettledHidden(app)
                 is FilterMode.ByUser -> app.userId == mode.userId && allowSystem
             }
             val matchesQuery = debouncedQuery.isBlank() ||
@@ -1443,6 +1496,22 @@ private fun AppsTabScreen(
                 app.packageName.contains(debouncedQuery, ignoreCase = true)
             matchesMode && matchesQuery
         }.sortedWith(comparator)
+
+        if (scopeTracker.prevIndices.isNotEmpty() && effectiveSettledHiddenKeys != scopeTracker.prevHiddenKeys) {
+            for ((newIdx, entry) in sorted.withIndex()) {
+                val uKey = entry.uniqueKey
+                val wasHidden = uKey in scopeTracker.prevHiddenKeys
+                val nowHidden = uKey in effectiveSettledHiddenKeys
+                val oldIdx = scopeTracker.prevIndices[uKey]
+                if (wasHidden != nowHidden && oldIdx != null && oldIdx != newIdx) {
+                    scopeTracker.keyVersions[uKey] = (scopeTracker.keyVersions[uKey] ?: 0) + 1
+                }
+            }
+        }
+        scopeTracker.prevIndices = sorted.withIndex().associate { (i, e) -> e.uniqueKey to i }
+        scopeTracker.prevHiddenKeys = effectiveSettledHiddenKeys
+
+        sorted to HashMap(scopeTracker.keyVersions)
     }
 
     val allCount = remember(apps, showSystemApps) {
@@ -1666,58 +1735,61 @@ private fun AppsTabScreen(
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        val viewScopeKey = remember(filterMode, debouncedQuery.isNotEmpty(), sortMode) {
-            val filterTag = when (val mode = filterMode) {
-                is FilterMode.AllApps -> "all"
-                is FilterMode.XposedOnly -> "xposed"
-                is FilterMode.HiddenOnly -> "hidden"
-                is FilterMode.ByUser -> "u${mode.userId}"
-            }
-            val searchTag = if (debouncedQuery.isNotEmpty()) "search" else "idle"
-            "${filterTag}_${searchTag}_${sortMode.code}"
-        }
+        var initialScopeKey by remember { mutableStateOf(viewScopeKey) }
 
         LaunchedEffect(viewScopeKey) {
-            listState.scrollToItem(0, 0)
+            if (initialScopeKey != viewScopeKey) {
+                listState.scrollToItem(0, 0)
+            }
         }
 
-        if (filteredApps.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = strings.emptyAppsList,
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+        key(viewScopeKey) {
+            val scopedListState = remember {
+                if (initialScopeKey == viewScopeKey) {
+                    listState
+                } else {
+                    initialScopeKey = viewScopeKey
+                    LazyListState(0, 0)
+                }
             }
-        } else {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                items(filteredApps, key = { "${viewScopeKey}_${if (isEntryHidden(it)) "h" else "v"}_${it.uniqueKey}" }) { entry ->
-                    AppItemRow(
-                        entry = entry,
-                        isHidden = isEntryHidden(entry),
-                        strings = strings,
-                        sortMode = sortMode,
-                        modifier = Modifier.animateItem(
-                            fadeInSpec = null,
-                            fadeOutSpec = null,
-                            placementSpec = spring(
-                                dampingRatio = Spring.DampingRatioNoBouncy,
-                                stiffness = Spring.StiffnessLow
-                            )
-                        ),
-                        onToggle = { hide ->
-                            val currentIndex = listState.firstVisibleItemIndex
-                            val currentOffset = listState.firstVisibleItemScrollOffset
-                            onToggleAppHidden(entry, hide)
-                            val safeIndex = currentIndex.coerceAtMost(maxOf(0, filteredApps.size - 1))
-                            listState.requestScrollToItem(safeIndex, currentOffset)
-                        }
+
+            if (filteredApps.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = strings.emptyAppsList,
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+            } else {
+                LazyColumn(
+                    state = scopedListState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(bottom = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    items(
+                        items = filteredApps,
+                        key = { entry -> "${itemKeyVersions[entry.uniqueKey] ?: 0}_${entry.uniqueKey}" }
+                    ) { entry ->
+                        AppItemRow(
+                            entry = entry,
+                            isHidden = entry.uniqueKey in actualHiddenKeys,
+                            strings = strings,
+                            sortMode = sortMode,
+                            modifier = Modifier.animateItem(
+                                fadeInSpec = tween(durationMillis = 180, easing = LinearOutSlowInEasing),
+                                fadeOutSpec = tween(durationMillis = 150, easing = FastOutLinearInEasing),
+                                placementSpec = spring(
+                                    dampingRatio = Spring.DampingRatioNoBouncy,
+                                    stiffness = Spring.StiffnessMediumLow
+                                )
+                            ),
+                            onToggle = { hide ->
+                                onToggleAppHidden(entry, hide)
+                            }
+                        )
+                    }
                 }
             }
         }
