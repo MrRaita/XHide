@@ -1696,7 +1696,7 @@ private fun AppsTabScreen(
                 contentPadding = PaddingValues(bottom = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                items(filteredApps, key = { "${viewScopeKey}_${it.uniqueKey}" }) { entry ->
+                items(filteredApps, key = { "${viewScopeKey}_${if (isEntryHidden(it)) "h" else "v"}_${it.uniqueKey}" }) { entry ->
                     AppItemRow(
                         entry = entry,
                         isHidden = isEntryHidden(entry),
