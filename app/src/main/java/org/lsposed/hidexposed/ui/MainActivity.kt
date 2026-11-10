@@ -99,9 +99,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalConfiguration
@@ -1685,7 +1687,14 @@ private fun AppsTabScreen(
                         isHidden = isEntryHidden(entry),
                         strings = strings,
                         sortMode = sortMode,
-                        modifier = Modifier.animateItem(),
+                        modifier = Modifier.animateItem(
+                            fadeInSpec = null,
+                            fadeOutSpec = null,
+                            placementSpec = spring(
+                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                stiffness = Spring.StiffnessLow
+                            )
+                        ),
                         onToggle = { hide -> onToggleAppHidden(entry, hide) }
                     )
                 }
