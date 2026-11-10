@@ -209,8 +209,7 @@ object ConfigStore {
                 for (i in 0 until limit) {
                     val raw = changedArray.optString(i)
                     if (isValidConfigKey(raw)) {
-                        val pkgOnly = raw.substringAfter(':', raw)
-                        changed.add(pkgOnly)
+                        changed.add(raw)
                     }
                 }
             }
@@ -386,7 +385,7 @@ object ConfigStore {
             .apply()
 
         return try {
-            val cleanChanged = changedPackages.map { it.substringAfter(':', it) }.distinct()
+            val cleanChanged = changedPackages.filter { isValidConfigKey(it) }.distinct()
 
             val payload = JSONObject().apply {
                 put("autoHide", autoHide)

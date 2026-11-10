@@ -938,10 +938,14 @@ object LauncherHook {
     }
 
     /**
-     * Notifies all registered launchers across all user profiles on Android 11–17:
+     * Notifies all registered launchers across affected user profiles on Android 11–17:
      * Broadcasts `onPackageRemoved` / `onPackagesUnavailable` when hiding so OEM launchers (One UI Home,
      * HyperOS, ColorOS) and AOSP Launcher3 immediately purge icons from persistent SQLite caches and UI.
      * Broadcasts `onPackageAdded` / `onPackagesAvailable` when unhiding so launchers re-query activities.
+     *
+     * Correctly filters by target profile (`userId`) so secondary/work profiles (e.g. User 10) never receive
+     * events for User 0 apps (preventing OEM launcher `removeIf` race conditions).
+     * Validates listener accessibility via `isEnabledProfileOf` using the listener's `BroadcastCookie`.
      */
     private fun notifyLaunchersOfChanges(
         launcherAppsImpl: Any?,
@@ -953,9 +957,26 @@ object LauncherHook {
             val handler = XposedHelpers.getObjectField(launcherAppsImpl, "mCallbackHandler") as? Handler
             val profiles = collectAllUserHandles(launcherAppsImpl, fallbackUserHandle)
 
+            val parsedTargets = changedPackages.map { raw ->
+                if (raw.contains(':')) {
+                    val uidStr = raw.substringBefore(':')
+                    val pkg = raw.substringAfter(':')
+                    uidStr.toIntOrNull() to pkg
+                } else {
+                    null to raw
+                }
+            }
+
             val task = Runnable {
                 for (profile in profiles) {
-                    broadcastOnPackageChangedBatch(launcherAppsImpl, profile, changedPackages)
+                    val profileUserId = getUserId(profile)
+                    val pkgsForThisProfile = parsedTargets.filter { (targetUserId, _) ->
+                        targetUserId == null || targetUserId == profileUserId
+                    }.map { it.second }.distinct()
+
+                    if (pkgsForThisProfile.isNotEmpty()) {
+                        broadcastOnPackageChangedBatch(launcherAppsImpl, profile, pkgsForThisProfile)
+                    }
                 }
             }
             if (handler != null) {
@@ -963,7 +984,8 @@ object LauncherHook {
             } else {
                 task.run()
             }
-        } catch (_: Throwable) {
+        } catch (t: Throwable) {
+            XposedBridge.log("[$TAG] Error in notifyLaunchersOfChanges: ${t.message}")
         }
     }
 
@@ -994,6 +1016,16 @@ object LauncherHook {
 
                 for (i in 0 until count) {
                     val listener = listeners.getBroadcastItem(i) as? IInterface ?: continue
+                    val cookie = try { listeners.getBroadcastCookie(i) } catch (_: Throwable) { null }
+
+                    if (cookie != null) {
+                        val isAccessible = runCatching {
+                            XposedHelpers.callMethod(launcherAppsImpl, "isEnabledProfileOf", profile, cookie, "onPackageChanged") as? Boolean
+                        }.getOrNull()
+                        if (isAccessible == false) {
+                            continue
+                        }
+                    }
 
                     // 1. Process Hidden Packages
                     if (hiddenPkgs.isNotEmpty()) {
@@ -1005,7 +1037,8 @@ object LauncherHook {
                         for (pkg in hiddenPkgs) {
                             try {
                                 XposedHelpers.callMethod(listener, "onPackageRemoved", profile, pkg)
-                            } catch (_: Throwable) {
+                            } catch (t: Throwable) {
+                                XposedBridge.log("[$TAG] Error calling onPackageRemoved($profile, $pkg): ${t.message}")
                             }
                             if (emptySlice != null) {
                                 try {
@@ -1016,7 +1049,8 @@ object LauncherHook {
                         }
                         try {
                             XposedHelpers.callMethod(listener, "onPackagesUnavailable", profile, hiddenPkgs.toTypedArray(), false)
-                        } catch (_: Throwable) {
+                        } catch (t: Throwable) {
+                            XposedBridge.log("[$TAG] Error calling onPackagesUnavailable: ${t.message}")
                         }
                     }
 
@@ -1025,23 +1059,22 @@ object LauncherHook {
                         for (pkg in unhiddenPkgs) {
                             try {
                                 XposedHelpers.callMethod(listener, "onPackageAdded", profile, pkg)
-                            } catch (_: Throwable) {
-                            }
-                            try {
-                                XposedHelpers.callMethod(listener, "onPackageChanged", profile, pkg)
-                            } catch (_: Throwable) {
+                            } catch (t: Throwable) {
+                                XposedBridge.log("[$TAG] Error calling onPackageAdded($profile, $pkg): ${t.message}")
                             }
                         }
                         try {
                             XposedHelpers.callMethod(listener, "onPackagesAvailable", profile, unhiddenPkgs.toTypedArray(), false)
-                        } catch (_: Throwable) {
+                        } catch (t: Throwable) {
+                            XposedBridge.log("[$TAG] Error calling onPackagesAvailable: ${t.message}")
                         }
                     }
                 }
             } finally {
                 listeners.finishBroadcast()
             }
-        } catch (_: Throwable) {
+        } catch (t: Throwable) {
+            XposedBridge.log("[$TAG] Error in broadcastOnPackageChangedBatch: ${t.message}")
         }
     }
 

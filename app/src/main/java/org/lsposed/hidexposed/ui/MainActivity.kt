@@ -575,7 +575,7 @@ fun MainScreen(
         syncWithSystem(
             newWl = newWl,
             newBl = newBl,
-            changedPkgs = listOf(entry.packageName),
+            changedPkgs = listOf(entry.uniqueKey),
             onRevert = {
                 whitelist = prevWl
                 blacklist = prevBl
@@ -685,7 +685,7 @@ fun MainScreen(
                         autoHideCloneModules = true
                         whitelist = defaultWl
                         blacklist = defaultBl
-                        val allPkgs = apps.map { it.packageName }.distinct()
+                        val allPkgs = apps.map { it.uniqueKey }.distinct()
                         syncWithSystem(
                             newAutoHide = true,
                             newAutoHideClone = true,
@@ -741,7 +741,7 @@ fun MainScreen(
                         blacklist = cfg.blacklist
                         pendingImport = null
 
-                        val allPkgs = apps.map { it.packageName }.distinct()
+                        val allPkgs = apps.map { it.uniqueKey }.distinct()
                         syncWithSystem(
                             newAutoHide = cfg.autoHide,
                             newAutoHideClone = cfg.autoHideClone,
@@ -929,7 +929,7 @@ fun MainScreen(
                         onToggleAutoHide = { checked ->
                             val prevAutoHide = autoHideModules
                             autoHideModules = checked
-                            val modPkgs = apps.filter { it.isXposedModule }.map { it.packageName }.distinct()
+                            val modPkgs = apps.filter { it.isXposedModule }.map { it.uniqueKey }.distinct()
                             syncWithSystem(
                                 newAutoHide = checked,
                                 changedPkgs = modPkgs,
@@ -939,7 +939,7 @@ fun MainScreen(
                         onToggleAutoHideClone = { checked ->
                             val prevAutoHideClone = autoHideCloneModules
                             autoHideCloneModules = checked
-                            val modPkgs = apps.filter { it.isXposedModule && it.userId != 0 }.map { it.packageName }.distinct()
+                            val modPkgs = apps.filter { it.isXposedModule && it.userId != 0 }.map { it.uniqueKey }.distinct()
                             syncWithSystem(
                                 newAutoHideClone = checked,
                                 changedPkgs = modPkgs,
@@ -2500,9 +2500,7 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
             autoHideClone = ConfigStore.autoHideCloneModules,
             whitelist = cleanedWl,
             blacklist = cleanedBl,
-            changedPackages = (staleWl + staleBl).map {
-                if (it.contains(":")) it.substringAfter(":") else it
-            }.distinct()
+            changedPackages = (staleWl + staleBl).distinct()
         )
     }
 
