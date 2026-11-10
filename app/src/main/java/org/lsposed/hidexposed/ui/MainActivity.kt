@@ -1666,6 +1666,21 @@ private fun AppsTabScreen(
 
         Spacer(modifier = Modifier.height(6.dp))
 
+        val viewScopeKey = remember(filterMode, debouncedQuery.isNotEmpty(), sortMode) {
+            val filterTag = when (val mode = filterMode) {
+                is FilterMode.AllApps -> "all"
+                is FilterMode.XposedOnly -> "xposed"
+                is FilterMode.HiddenOnly -> "hidden"
+                is FilterMode.ByUser -> "u${mode.userId}"
+            }
+            val searchTag = if (debouncedQuery.isNotEmpty()) "search" else "idle"
+            "${filterTag}_${searchTag}_${sortMode.code}"
+        }
+
+        LaunchedEffect(viewScopeKey) {
+            listState.scrollToItem(0, 0)
+        }
+
         if (filteredApps.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
@@ -1681,7 +1696,7 @@ private fun AppsTabScreen(
                 contentPadding = PaddingValues(bottom = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                items(filteredApps, key = { it.uniqueKey }) { entry ->
+                items(filteredApps, key = { "${viewScopeKey}_${it.uniqueKey}" }) { entry ->
                     AppItemRow(
                         entry = entry,
                         isHidden = isEntryHidden(entry),
