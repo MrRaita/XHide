@@ -1695,7 +1695,13 @@ private fun AppsTabScreen(
                                 stiffness = Spring.StiffnessLow
                             )
                         ),
-                        onToggle = { hide -> onToggleAppHidden(entry, hide) }
+                        onToggle = { hide ->
+                            val currentIndex = listState.firstVisibleItemIndex
+                            val currentOffset = listState.firstVisibleItemScrollOffset
+                            onToggleAppHidden(entry, hide)
+                            val safeIndex = currentIndex.coerceAtMost(maxOf(0, filteredApps.size - 1))
+                            listState.requestScrollToItem(safeIndex, currentOffset)
+                        }
                     )
                 }
             }
