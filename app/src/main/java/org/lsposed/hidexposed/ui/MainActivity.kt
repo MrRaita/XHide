@@ -120,7 +120,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -1922,8 +1921,7 @@ private fun AppItemRow(
 
             Switch(
                 checked = isHidden,
-                onCheckedChange = null,
-                modifier = Modifier.scale(0.95f)
+                onCheckedChange = null
             )
         }
     }
@@ -2354,8 +2352,7 @@ private fun CompactSwitchRow(
         Switch(
             checked = checked,
             enabled = enabled,
-            onCheckedChange = null,
-            modifier = Modifier.scale(0.95f)
+            onCheckedChange = null
         )
     }
 }
