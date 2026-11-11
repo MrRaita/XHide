@@ -43,6 +43,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.padding
@@ -98,7 +99,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -1919,11 +1923,65 @@ private fun AppItemRow(
 
             Spacer(modifier = Modifier.width(6.dp))
 
-            Switch(
-                checked = isHidden,
-                onCheckedChange = null
+            OneUiSwitch(
+                checked = isHidden
             )
         }
+    }
+}
+
+@Composable
+private fun OneUiSwitch(
+    checked: Boolean,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
+) {
+    val trackWidth = 46.dp
+    val trackHeight = 26.dp
+    val thumbSize = 20.dp
+    val thumbPadding = 3.dp
+    val maxOffset = trackWidth - thumbSize - thumbPadding
+
+    val thumbOffset by animateDpAsState(
+        targetValue = if (checked) maxOffset else thumbPadding,
+        animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
+        label = "switchThumbOffset"
+    )
+
+    val trackColor by animateColorAsState(
+        targetValue = when {
+            !enabled -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+            checked -> MaterialTheme.colorScheme.primary
+            else -> MaterialTheme.colorScheme.surfaceVariant
+        },
+        animationSpec = tween(durationMillis = 180),
+        label = "switchTrackColor"
+    )
+
+    val thumbColor by animateColorAsState(
+        targetValue = when {
+            !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+            checked -> MaterialTheme.colorScheme.onPrimary
+            else -> MaterialTheme.colorScheme.outline
+        },
+        animationSpec = tween(durationMillis = 180),
+        label = "switchThumbColor"
+    )
+
+    Box(
+        modifier = modifier
+            .size(width = trackWidth, height = trackHeight)
+            .clip(CircleShape)
+            .background(trackColor)
+    ) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .offset(x = thumbOffset)
+                .size(thumbSize)
+                .clip(CircleShape)
+                .background(thumbColor)
+        )
     }
 }
 
@@ -2349,10 +2407,9 @@ private fun CompactSwitchRow(
             )
         }
         Spacer(modifier = Modifier.width(8.dp))
-        Switch(
+        OneUiSwitch(
             checked = checked,
-            enabled = enabled,
-            onCheckedChange = null
+            enabled = enabled
         )
     }
 }
