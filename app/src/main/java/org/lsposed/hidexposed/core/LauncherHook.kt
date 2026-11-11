@@ -322,7 +322,6 @@ object LauncherHook {
 
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
-                        val callingPackage = param.args[0] as? String ?: return
                         val targetPackage = param.args[1] as? String
                         val userHandle = param.args[2] as? UserHandle
                         val userId = getUserId(userHandle)
@@ -409,7 +408,6 @@ object LauncherHook {
             override fun afterHookedMethod(param: MethodHookParam) {
                 try {
                     if (param.result == null) return
-                    val callingPackage = param.args[0] as? String ?: return
                     val callingUid = Binder.getCallingUid()
                     if (isExemptCaller(callingUid, param.thisObject)) return
 
@@ -472,7 +470,6 @@ object LauncherHook {
                     override fun afterHookedMethod(param: MethodHookParam) {
                         try {
                             if (param.result != true) return
-                            val callingPackage = param.args[0] as? String ?: return
                             val callingUid = Binder.getCallingUid()
                             if (isExemptCaller(callingUid, param.thisObject)) return
 
@@ -510,7 +507,6 @@ object LauncherHook {
                     override fun afterHookedMethod(param: MethodHookParam) {
                         try {
                             if (param.result != true) return
-                            val callingPackage = param.args[0] as? String ?: return
                             val callingUid = Binder.getCallingUid()
                             if (isExemptCaller(callingUid, param.thisObject)) return
 
@@ -542,7 +538,6 @@ object LauncherHook {
             override fun afterHookedMethod(param: MethodHookParam) {
                 try {
                     if (param.result == null) return
-                    val callingPackage = param.args[0] as? String ?: return
                     val callingUid = Binder.getCallingUid()
                     if (isExemptCaller(callingUid, param.thisObject)) return
 
@@ -636,7 +631,6 @@ object LauncherHook {
                     override fun afterHookedMethod(param: MethodHookParam) {
                         try {
                             if (param.result == null) return
-                            val callingPackage = param.args[0] as? String ?: return
                             val callingUid = Binder.getCallingUid()
                             if (isExemptCaller(callingUid, param.thisObject)) return
 
@@ -669,7 +663,6 @@ object LauncherHook {
             override fun afterHookedMethod(param: MethodHookParam) {
                 try {
                     val slice = param.result ?: return
-                    val callingPackage = param.args[0] as? String ?: return
                     val callingUid = Binder.getCallingUid()
                     if (isExemptCaller(callingUid, param.thisObject)) return
 
