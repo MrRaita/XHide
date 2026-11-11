@@ -7,7 +7,6 @@ import android.os.Binder
 import android.os.UserHandle
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Universal O(1) Xposed Module Detector.
@@ -25,7 +24,16 @@ object ModuleCache {
     private const val TAG = "XHide"
 
     // Key: "packageName|sourceDir" -> Value: true if Xposed module, false otherwise
-    private val apkModuleCache = ConcurrentHashMap<String, Boolean>()
+    private const val MAX_CACHE_ENTRIES = 2048
+
+    // Bounded access-ordered LRU: evicts only the least recently used entry instead of
+    // wiping the whole cache (which forced ZIP re-scans of every package on Binder threads).
+    private val apkModuleCache: MutableMap<String, Boolean> = java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<String, Boolean>(256, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?): Boolean =
+                size > MAX_CACHE_ENTRIES
+        }
+    )
 
     fun isXposedModule(
         packageName: String,
@@ -51,10 +59,6 @@ object ModuleCache {
 
         val cacheKey = "$packageName|$sourceDir"
         apkModuleCache[cacheKey]?.let { return it }
-
-        if (apkModuleCache.size > 2048) {
-            apkModuleCache.clear()
-        }
 
         val detected = detectModuleFromAppInfo(packageName, resolvedAppInfo, context, userHandle)
         apkModuleCache[cacheKey] = detected
