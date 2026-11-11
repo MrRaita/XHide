@@ -352,8 +352,8 @@ object LauncherHook {
                             return
                         }
 
-                        // Never filter queries coming from core system, our own UI, or Xposed managers
-                        if (isExemptCaller(callingPackage, callingUid, param.thisObject)) {
+                        // Never filter queries coming from core system or our own UI
+                        if (isExemptCaller(callingUid, param.thisObject)) {
                             return
                         }
 
@@ -411,7 +411,7 @@ object LauncherHook {
                     if (param.result == null) return
                     val callingPackage = param.args[0] as? String ?: return
                     val callingUid = Binder.getCallingUid()
-                    if (isExemptCaller(callingPackage, callingUid, param.thisObject)) return
+                    if (isExemptCaller(callingUid, param.thisObject)) return
 
                     val component = param.args[1] as? ComponentName
                     val userHandle = param.args[2] as? UserHandle
@@ -474,7 +474,7 @@ object LauncherHook {
                             if (param.result != true) return
                             val callingPackage = param.args[0] as? String ?: return
                             val callingUid = Binder.getCallingUid()
-                            if (isExemptCaller(callingPackage, callingUid, param.thisObject)) return
+                            if (isExemptCaller(callingUid, param.thisObject)) return
 
                             val pkgName = param.args[1] as? String ?: return
                             val userHandle = param.args[2] as? UserHandle
@@ -512,7 +512,7 @@ object LauncherHook {
                             if (param.result != true) return
                             val callingPackage = param.args[0] as? String ?: return
                             val callingUid = Binder.getCallingUid()
-                            if (isExemptCaller(callingPackage, callingUid, param.thisObject)) return
+                            if (isExemptCaller(callingUid, param.thisObject)) return
 
                             val component = param.args[1] as? ComponentName ?: return
                             val userHandle = param.args[2] as? UserHandle
@@ -544,7 +544,7 @@ object LauncherHook {
                     if (param.result == null) return
                     val callingPackage = param.args[0] as? String ?: return
                     val callingUid = Binder.getCallingUid()
-                    if (isExemptCaller(callingPackage, callingUid, param.thisObject)) return
+                    if (isExemptCaller(callingUid, param.thisObject)) return
 
                     val pkgName = param.args[1] as? String ?: return
                     val userHandle = param.args[3] as? UserHandle
@@ -638,7 +638,7 @@ object LauncherHook {
                             if (param.result == null) return
                             val callingPackage = param.args[0] as? String ?: return
                             val callingUid = Binder.getCallingUid()
-                            if (isExemptCaller(callingPackage, callingUid, param.thisObject)) return
+                            if (isExemptCaller(callingUid, param.thisObject)) return
 
                             val component = param.args[1] as? ComponentName ?: return
                             val pkgName = component.packageName
@@ -671,7 +671,7 @@ object LauncherHook {
                     val slice = param.result ?: return
                     val callingPackage = param.args[0] as? String ?: return
                     val callingUid = Binder.getCallingUid()
-                    if (isExemptCaller(callingPackage, callingUid, param.thisObject)) return
+                    if (isExemptCaller(callingUid, param.thisObject)) return
 
                     val rawList = extractListFromResult(slice) ?: return
                     if (rawList.isEmpty()) return
@@ -785,7 +785,7 @@ object LauncherHook {
         }
     }
 
-    private fun isExemptCaller(callingPackage: String?, callingUid: Int, serviceObject: Any?): Boolean {
+    private fun isExemptCaller(callingUid: Int, serviceObject: Any?): Boolean {
         if (callingUid == Process.SYSTEM_UID || callingUid == 0) return true
         if (isCallerSelf(callingUid, serviceObject)) return true
         return false
@@ -1014,6 +1014,13 @@ object LauncherHook {
                     )
                 }
 
+                val emptySlice = if (hiddenPkgs.isNotEmpty()) {
+                    runCatching {
+                        val sliceClass = Class.forName("android.content.pm.ParceledListSlice")
+                        XposedHelpers.callStaticMethod(sliceClass, "emptyList")
+                    }.getOrNull()
+                } else null
+
                 for (i in 0 until count) {
                     val listener = listeners.getBroadcastItem(i) as? IInterface ?: continue
                     val cookie = try { listeners.getBroadcastCookie(i) } catch (_: Throwable) { null }
@@ -1029,11 +1036,6 @@ object LauncherHook {
 
                     // 1. Process Hidden Packages
                     if (hiddenPkgs.isNotEmpty()) {
-                        val emptySlice = runCatching {
-                            val sliceClass = Class.forName("android.content.pm.ParceledListSlice")
-                            XposedHelpers.callStaticMethod(sliceClass, "emptyList")
-                        }.getOrNull()
-
                         for (pkg in hiddenPkgs) {
                             try {
                                 XposedHelpers.callMethod(listener, "onPackageRemoved", profile, pkg)

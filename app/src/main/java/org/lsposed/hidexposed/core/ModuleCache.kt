@@ -106,7 +106,7 @@ object ModuleCache {
     ): Boolean {
         // 1. Fast manifest meta-data check (Classic Xposed & Modern LibXposed)
         try {
-            val meta = appInfo?.metaData ?: resolveAppInfoSafely(packageName, context, userHandle)?.metaData
+            val meta = appInfo.metaData ?: resolveAppInfoSafely(packageName, context, userHandle)?.metaData
             if (meta != null) {
                 if (meta.containsKey("xposedmodule") ||
                     meta.containsKey("xposedminversion") ||

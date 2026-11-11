@@ -1,6 +1,6 @@
 # XHide
 
-XHide is an Xposed module that hides launcher icons for Xposed modules and user-selected applications on Android 11 through Android 15+.
+XHide is an Xposed module that hides launcher icons for Xposed modules and user-selected applications on Android 11 through Android 17 (API 30–37+).
 
 By intercepting launcher queries at `LauncherAppsService`, XHide removes icons from home screens, app drawers, and launcher search results while keeping applications intact, fully functional, and accessible through framework managers and system settings.
 
@@ -32,7 +32,7 @@ If you want any detected module or manager icon to remain visible on your launch
 
 ## Compatibility
 
-- **Android Versions:** Android 11 (API 30) through Android 15 / 16 (API 35–36).
+- **Android Versions:** Android 11 (API 30) through Android 17 (API 35–37+).
 - **Frameworks:** LSPosed, Vector, and compatible ART hook runtimes.
 - **Scope:** Requires scoping to `System Framework` (`android`).
 
