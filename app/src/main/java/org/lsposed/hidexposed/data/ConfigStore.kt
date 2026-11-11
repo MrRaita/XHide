@@ -159,6 +159,7 @@ object ConfigStore {
      * Parses an IPC update payload sent by the UI app to `system_server`.
      * Returns the list of affected package names so `LauncherAppsImpl` can notify launchers across all users.
      */
+    @Synchronized
     fun applySystemIpcUpdate(payload: String): List<String> {
         if (payload.length > MAX_IPC_PAYLOAD_CHARS) return emptyList()
         return try {
