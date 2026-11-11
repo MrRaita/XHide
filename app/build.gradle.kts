@@ -18,6 +18,17 @@ android {
     signingConfigs {
         create("release") {
             val keystoreFile = System.getenv("KEYSTORE_FILE")
+            // Opt-in strict mode for official releases: refuse to fall back to the debug key
+            // or ship without a pinned companion certificate.
+            val strictSigning = System.getenv("XHIDE_STRICT_SIGNING").equals("true", ignoreCase = true)
+            if (strictSigning) {
+                if (keystoreFile.isNullOrEmpty() || !file(keystoreFile).exists()) {
+                    throw GradleException("XHIDE_STRICT_SIGNING is set but KEYSTORE_FILE is missing or does not exist")
+                }
+                if (System.getenv("RELEASE_CERT_SHA256").isNullOrBlank()) {
+                    throw GradleException("XHIDE_STRICT_SIGNING is set but RELEASE_CERT_SHA256 is empty")
+                }
+            }
             if (!keystoreFile.isNullOrEmpty() && file(keystoreFile).exists()) {
                 storeFile = file(keystoreFile)
                 storePassword = System.getenv("KEYSTORE_PASSWORD")
