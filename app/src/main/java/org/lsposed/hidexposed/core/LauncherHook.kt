@@ -949,7 +949,13 @@ object LauncherHook {
         return try {
             XposedHelpers.callMethod(userHandle, "getIdentifier") as Int
         } catch (_: Throwable) {
-            userHandle.hashCode()
+            // Read the backing field directly instead of relying on hashCode() == mHandle,
+            // which is an AOSP implementation detail OEM ROMs are not obliged to keep.
+            try {
+                XposedHelpers.getIntField(userHandle, "mHandle")
+            } catch (_: Throwable) {
+                userHandle.hashCode()
+            }
         }
     }
 
