@@ -803,13 +803,60 @@ object LauncherHook {
                 return false
             }
 
-            cachedSelfAppId = appId
+            // Only cache once we can guarantee invalidation on uninstall/replace;
+            // otherwise a reassigned appId would inherit IPC and cross-profile privileges.
+            if (ensureSelfPackageWatcher(context)) {
+                cachedSelfAppId = appId
+            }
             true
         } catch (_: Throwable) {
             false
         } finally {
             Binder.restoreCallingIdentity(token)
         }
+    }
+
+    @Volatile
+    private var selfWatcherRegistered = false
+
+    /**
+     * Registers a one-time receiver in `system_server` that drops [cachedSelfAppId] whenever the
+     * companion package is removed, replaced, or re-added in any user, forcing re-verification.
+     * Must be called with cleared calling identity. Returns true when the watcher is active.
+     */
+    @Synchronized
+    private fun ensureSelfPackageWatcher(context: Context): Boolean {
+        if (selfWatcherRegistered) return true
+        val filter = android.content.IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_REMOVED)
+            addAction(Intent.ACTION_PACKAGE_FULLY_REMOVED)
+            addAction(Intent.ACTION_PACKAGE_REPLACED)
+            addAction(Intent.ACTION_PACKAGE_ADDED)
+            addDataScheme("package")
+            addDataSchemeSpecificPart(ConfigStore.SELF_PACKAGE, android.os.PatternMatcher.PATTERN_LITERAL)
+        }
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                if (intent?.data?.schemeSpecificPart != ConfigStore.SELF_PACKAGE) return
+                cachedSelfAppId = -1
+                XposedBridge.log("[$TAG] Companion package changed (${intent.action}); self-caller cache invalidated")
+            }
+        }
+        selfWatcherRegistered = try {
+            val allUsers = XposedHelpers.getStaticObjectField(UserHandle::class.java, "ALL") as UserHandle
+            XposedHelpers.callMethod(context, "registerReceiverAsUser", receiver, allUsers, filter, null, null)
+            true
+        } catch (t: Throwable) {
+            XposedBridge.log("[$TAG] registerReceiverAsUser failed, falling back: ${t.message}")
+            try {
+                context.registerReceiver(receiver, filter)
+                true
+            } catch (t2: Throwable) {
+                XposedBridge.log("[$TAG] Could not register self package watcher: ${t2.message}")
+                false
+            }
+        }
+        return selfWatcherRegistered
     }
 
     private fun verifyCallerSignature(pm: PackageManager): Boolean {
