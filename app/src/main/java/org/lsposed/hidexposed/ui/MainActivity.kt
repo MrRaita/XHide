@@ -563,7 +563,10 @@ fun MainScreen(
         newWl.remove(entry.packageName)
         newBl.remove(entry.packageName)
 
-        val defaultHidden = entry.isXposedModule &&
+        // ConfigStore force-whitelists XHide itself unless it is explicitly blacklisted, so auto-hide
+        // never applies to it. Treat it as visible-by-default so hiding writes a blacklist entry.
+        val isSelf = uKey == ConfigStore.SELF_USER0_KEY
+        val defaultHidden = !isSelf && entry.isXposedModule &&
             (if (entry.userId == 0) autoHideModules else (autoHideModules && autoHideCloneModules))
 
         if (hideInLauncher) {
