@@ -1,0 +1,43 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: en-US
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    - "!dist/**"
+    - "!build/**"
+    - "!app/build/**"
+    - "!**/*.apk"
+    - "!gradle/wrapper/**"
+  path_instructions:
+    - path: "app/src/main/java/org/lsposed/hidexposed/core/**"
+      instructions: |
+        This code runs inside system_server via Xposed hooks on Binder threads.
+        - Any uncaught exception or long blocking call can freeze or crash the whole OS; hooks must fail safe and fall back to original behavior.
+        - Flag blocking I/O, PackageManager calls, or locks on hot hook paths (getLauncherActivities, isActivityEnabled, getShortcuts).
+        - Calls made with Binder.clearCallingIdentity must restore identity in a finally block.
+        - Self-caller checks (isCallerSelf) gate IPC and cross-profile privileges; flag anything that could let another app pass them.
+        - Reflection targets differ across Android 11-17 and OEM ROMs; prefer graceful fallbacks over assumptions.
+    - path: "app/src/main/java/org/lsposed/hidexposed/data/**"
+      instructions: |
+        Shared state read by system_server Binder threads.
+        - Preserve the pattern of publishing immutable snapshots through a single @Volatile reference; flag partial or multi-field updates.
+        - IPC payloads must never exceed MAX_IPC_PAYLOAD_CHARS (96 * 1024).
+        - Persisted files under /data/system must be written via DurableFiles (fsync + atomic rename).
+        - Respect the "Hide XHide Icon" rule: XHide is visible by default and hidden only via an explicit blacklist entry.
+    - path: "app/src/main/java/org/lsposed/hidexposed/ui/**"
+      instructions: |
+        Jetpack Compose companion app.
+        - Flag work on the main thread (PackageManager queries, file I/O, IPC).
+        - UI hide/unhide logic must stay consistent with ConfigStore.shouldHidePackage.
+        - All user-facing strings must exist in every language in Strings.kt (EN, TR, DE, RU, ZH).
+    - path: "**/*"
+      instructions: |
+        Project rules: all code, comments, commit messages, and documentation must be in English. No emojis anywhere.
+chat:
+  auto_reply: true
