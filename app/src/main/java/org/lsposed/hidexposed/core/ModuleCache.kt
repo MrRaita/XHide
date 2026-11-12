@@ -8,7 +8,6 @@ import android.os.Process
 import android.os.UserHandle
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
-import org.lsposed.hidexposed.BuildConfig
 import org.lsposed.hidexposed.data.DurableFiles
 import java.io.File
 import java.util.concurrent.Executors
@@ -71,7 +70,7 @@ object ModuleCache {
                 val file = File(ModuleCacheFile.PATH)
                 if (!file.isFile) return
                 if (file.length() > ModuleCacheFile.MAX_FILE_BYTES) return
-                val loaded = ModuleCacheFile.decode(file.readText(), BuildConfig.VERSION_CODE, MAX_CACHE_ENTRIES)
+                val loaded = ModuleCacheFile.decode(file.readText(), ModuleCacheFile.DETECTION_RULES_VERSION, MAX_CACHE_ENTRIES)
                 for ((key, isModule) in loaded) {
                     apkModuleCache.putIfAbsent(key, isModule)
                 }
@@ -103,7 +102,7 @@ object ModuleCache {
             val snapshot = synchronized(apkModuleCache) { LinkedHashMap(apkModuleCache) }
             // Drop verdicts for APKs that no longer exist (uninstalled or replaced packages).
             val live = snapshot.filterKeys { File(ModuleCacheFile.sourceDirOf(it)).exists() }
-            val bytes = ModuleCacheFile.encode(live, BuildConfig.VERSION_CODE).toByteArray(Charsets.UTF_8)
+            val bytes = ModuleCacheFile.encode(live, ModuleCacheFile.DETECTION_RULES_VERSION).toByteArray(Charsets.UTF_8)
             if (bytes.size > ModuleCacheFile.MAX_FILE_BYTES) return
             DurableFiles.writeAtomically(ModuleCacheFile.PATH, bytes)
         } catch (t: Throwable) {

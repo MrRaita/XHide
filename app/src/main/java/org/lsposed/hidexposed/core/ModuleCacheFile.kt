@@ -3,16 +3,22 @@ package org.lsposed.hidexposed.core
 /**
  * On-disk format for persisted [ModuleCache] verdicts (`/data/system/hidexposed_modcache.txt`).
  *
- * Header line `xhide-modcache-v1:<versionCode>`, then one entry per line:
+ * Header line `xhide-modcache-v1:<DETECTION_RULES_VERSION>`, then one entry per line:
  * `1<TAB>packageName|sourceDir` (module) or `0<TAB>packageName|sourceDir` (not a module).
  *
  * Keys embed the APK path, which changes on every install or update, so a stale verdict can never
- * match a newer APK. The XHide version code in the header discards all verdicts whenever XHide
- * itself is updated, in case detection rules changed. Free of Xposed/Android dependencies so it
- * is unit-testable.
+ * match a newer APK. [DETECTION_RULES_VERSION] in the header discards all verdicts only when the
+ * detection logic itself changes, so ordinary XHide updates keep the cache. Free of Xposed/Android
+ * dependencies so it is unit-testable.
  */
 internal object ModuleCacheFile {
     const val PATH = "/data/system/hidexposed_modcache.txt"
+
+    /**
+     * Bump whenever ModuleCache's detection rules change (new metadata keys, new archive markers,
+     * different skip conditions) so verdicts computed by older rules are discarded on next boot.
+     */
+    const val DETECTION_RULES_VERSION = 1
     const val MAX_FILE_BYTES = 512 * 1024
     private const val HEADER_PREFIX = "xhide-modcache-v1:"
 
