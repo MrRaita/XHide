@@ -79,7 +79,7 @@ object ModuleCache {
             val pm = context.packageManager
             if (userHandle != null) {
                 try {
-                    val userId = XposedHelpers.callMethod(userHandle, "getIdentifier") as? Int ?: userHandle.hashCode()
+                    val userId = userIdOf(userHandle)
                     val info = XposedHelpers.callMethod(
                         pm,
                         "getApplicationInfoAsUser",

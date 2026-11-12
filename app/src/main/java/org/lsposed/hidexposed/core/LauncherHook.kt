@@ -944,20 +944,7 @@ object LauncherHook {
         return emptyList<Any>()
     }
 
-    private fun getUserId(userHandle: UserHandle?): Int {
-        if (userHandle == null) return 0
-        return try {
-            XposedHelpers.callMethod(userHandle, "getIdentifier") as Int
-        } catch (_: Throwable) {
-            // Read the backing field directly instead of relying on hashCode() == mHandle,
-            // which is an AOSP implementation detail OEM ROMs are not obliged to keep.
-            try {
-                XposedHelpers.getIntField(userHandle, "mHandle")
-            } catch (_: Throwable) {
-                userHandle.hashCode()
-            }
-        }
-    }
+    private fun getUserId(userHandle: UserHandle?): Int = userIdOf(userHandle)
 
     /**
      * Supports:
