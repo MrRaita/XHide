@@ -2591,11 +2591,15 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
     // 2. Secondary discovery pass: Ensure 100% of installed Xposed modules are present in XHide,
     // even if they do not declare an android.intent.category.LAUNCHER activity or were
     // omitted from launcher queries after device reboot.
-    val installedApps = try {
-        pm.getInstalledApplications(PackageManager.GET_META_DATA)
+    // Null when the query failed. An empty list is also treated as a failure: every device has
+    // installed packages, so emptiness can only mean the inventory was not actually retrieved.
+    val installedAppsResult: List<ApplicationInfo>? = try {
+        pm.getInstalledApplications(PackageManager.GET_META_DATA).takeIf { it.isNotEmpty() }
     } catch (_: Throwable) {
-        emptyList()
+        null
     }
+    val ownInventoryOk = installedAppsResult != null
+    val installedApps = installedAppsResult ?: emptyList()
 
     for (appInfo in installedApps) {
         val pkg = appInfo.packageName ?: continue
@@ -2670,6 +2674,8 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
                 return !known.contains(keyUserId)
             }
         }
+        // Absence only proves removal when our own package inventory was actually retrieved.
+        if (!ownInventoryOk) return false
         return !installedPackagesSet.contains(pkg)
     }
     val staleWl = if (hookActive) currentWl.filter { isStale(it) } else emptyList()
