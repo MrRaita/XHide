@@ -137,7 +137,9 @@ object ModuleCache {
         ensurePersistedLoaded()
         apkModuleCache[cacheKey]?.let { return it }
 
-        val detected = detectModuleFromAppInfo(packageName, resolvedAppInfo, context, userHandle)
+        // A failed APK read is not a verdict: return the safe default without caching it, so a
+        // transient I/O error cannot persist a module as "not a module" across boots.
+        val detected = scanModule(packageName, resolvedAppInfo, context, userHandle) ?: return false
         apkModuleCache[cacheKey] = detected
         schedulePersist()
         if (detected) {
@@ -185,7 +187,18 @@ object ModuleCache {
         appInfo: ApplicationInfo,
         context: Context?,
         userHandle: UserHandle?
-    ): Boolean {
+    ): Boolean = scanModule(packageName, appInfo, context, userHandle) ?: false
+
+    /**
+     * Returns true/false for a definitive verdict, or null when the APK could not be read
+     * (transient I/O error, file replaced mid-scan). Null results must not be cached.
+     */
+    private fun scanModule(
+        packageName: String,
+        appInfo: ApplicationInfo,
+        context: Context?,
+        userHandle: UserHandle?
+    ): Boolean? {
         // 1. Fast manifest meta-data check (Classic Xposed & Modern LibXposed)
         try {
             val meta = appInfo.metaData ?: resolveAppInfoSafely(packageName, context, userHandle)?.metaData
@@ -217,6 +230,8 @@ object ModuleCache {
                     }
                 }
             } catch (_: Throwable) {
+                // Unreadable APK: report "unknown" so the caller does not cache a false negative.
+                return null
             }
         }
 
