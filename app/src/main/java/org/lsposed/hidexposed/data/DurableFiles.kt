@@ -4,6 +4,7 @@ import android.system.Os
 import android.system.OsConstants
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 
 /**
  * Crash- and power-loss-safe file replacement for `system_server` state files.
@@ -19,10 +20,10 @@ internal object DurableFiles {
         writeDurably(tmpFile, bytes)
         restrictToOwner(tmpFile)
         if (!tmpFile.renameTo(targetFile)) {
-            writeDurably(targetFile, bytes)
-            restrictToOwner(targetFile)
+            // Never fall back to an in-place write: truncating the destination could expose or
+            // persist partial contents. Keep the previous file intact and report the failure.
             tmpFile.delete()
-            return
+            throw IOException("Atomic replace failed: ${tmpFile.path} -> ${targetFile.path}")
         }
         // rename(2) only updates the directory entry; it becomes durable once the parent
         // directory itself is synced.
