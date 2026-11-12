@@ -2516,6 +2516,9 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
 
     val entriesMap = LinkedHashMap<String, AppEntry>()
     val installedPackagesSet = HashSet<String>()
+    // Users whose launcher activities we actually received. Absence of a package is only
+    // meaningful for these; other users may simply be invisible (e.g. hook inactive).
+    val enumeratedUserIds = HashSet<Int>().apply { add(0) }
 
     // Query all launcher activities across all profiles (User 0, User 10 Clone/Work Profile, etc.)
     // Only apps with real launcher activities are included so every entry maps directly to a visible home screen / drawer icon.
@@ -2549,6 +2552,7 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
             if (pkg == "android") continue
 
             val userId = getUserIdFromHandle(info.user, userManager)
+            enumeratedUserIds.add(userId)
             val key = ConfigStore.userKey(userId, pkg)
             if (entriesMap.containsKey(key)) continue
 
@@ -2643,14 +2647,21 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
     // Prevents phantom ghost entries for packages that were uninstalled from the device.
     val currentWl = ConfigStore.getWhitelist()
     val currentBl = ConfigStore.getBlacklist()
-    val staleWl = currentWl.filter { key ->
-        val pkg = if (key.contains(":")) key.substringAfter(":") else key
-        !installedPackagesSet.contains(pkg)
+    // Without the system hook, other users' apps are invisible to us, so packages installed only
+    // in those users would look uninstalled and their rules would be wiped. Skip cleanup entirely.
+    val hookActive = try {
+        ConfigStore.pingSystemHook(context)
+    } catch (_: Throwable) {
+        false
     }
-    val staleBl = currentBl.filter { key ->
+    fun isStale(key: String): Boolean {
         val pkg = if (key.contains(":")) key.substringAfter(":") else key
-        !installedPackagesSet.contains(pkg)
+        if (installedPackagesSet.contains(pkg)) return false
+        val keyUserId = if (key.contains(":")) key.substringBefore(":").toIntOrNull() else null
+        return keyUserId == null || enumeratedUserIds.contains(keyUserId)
     }
+    val staleWl = if (hookActive) currentWl.filter { isStale(it) } else emptyList()
+    val staleBl = if (hookActive) currentBl.filter { isStale(it) } else emptyList()
 
     if (staleWl.isNotEmpty() || staleBl.isNotEmpty()) {
         val cleanedWl = currentWl - staleWl.toSet()
