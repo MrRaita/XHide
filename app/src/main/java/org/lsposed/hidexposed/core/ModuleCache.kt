@@ -4,9 +4,17 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Binder
+import android.os.Process
 import android.os.UserHandle
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
+import org.lsposed.hidexposed.BuildConfig
+import org.lsposed.hidexposed.data.DurableFiles
+import java.io.File
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Universal O(1) Xposed Module Detector.
@@ -35,6 +43,74 @@ object ModuleCache {
         }
     )
 
+    // Verdicts are persisted to disk so each boot does not re-open every APK on Binder threads.
+    // Writes are debounced so the burst of first-boot detections lands in a single file write.
+    private const val PERSIST_DELAY_MS = 5_000L
+
+    @Volatile
+    private var persistedLoaded = false
+    private val persistLock = Any()
+    private val persistScheduled = AtomicBoolean(false)
+    private val persistExecutor: ScheduledExecutorService by lazy {
+        Executors.newSingleThreadScheduledExecutor { r ->
+            Thread(r, "XHide-ModuleCache").apply {
+                isDaemon = true
+                priority = Thread.MIN_PRIORITY
+            }
+        }
+    }
+
+    private fun isSystemServer(): Boolean = Process.myUid() == Process.SYSTEM_UID
+
+    private fun ensurePersistedLoaded() {
+        if (persistedLoaded) return
+        synchronized(persistLock) {
+            if (persistedLoaded) return
+            try {
+                if (!isSystemServer()) return
+                val file = File(ModuleCacheFile.PATH)
+                if (!file.isFile) return
+                if (file.length() > ModuleCacheFile.MAX_FILE_BYTES) return
+                val loaded = ModuleCacheFile.decode(file.readText(), BuildConfig.VERSION_CODE, MAX_CACHE_ENTRIES)
+                for ((key, isModule) in loaded) {
+                    apkModuleCache.putIfAbsent(key, isModule)
+                }
+                XposedBridge.log("[$TAG] Loaded ${loaded.size} persisted module verdicts")
+            } catch (t: Throwable) {
+                XposedBridge.log("[$TAG] Could not load module cache: ${t.message}")
+            } finally {
+                persistedLoaded = true
+            }
+        }
+    }
+
+    private fun schedulePersist() {
+        if (!isSystemServer()) return
+        if (!persistScheduled.compareAndSet(false, true)) return
+        try {
+            persistExecutor.schedule({
+                persistScheduled.set(false)
+                persistNow()
+            }, PERSIST_DELAY_MS, TimeUnit.MILLISECONDS)
+        } catch (t: Throwable) {
+            persistScheduled.set(false)
+            XposedBridge.log("[$TAG] Could not schedule module cache write: ${t.message}")
+        }
+    }
+
+    private fun persistNow() {
+        try {
+            val snapshot = synchronized(apkModuleCache) { LinkedHashMap(apkModuleCache) }
+            // Drop verdicts for APKs that no longer exist (uninstalled or replaced packages).
+            val live = snapshot.filterKeys { File(ModuleCacheFile.sourceDirOf(it)).exists() }
+            val bytes = ModuleCacheFile.encode(live, BuildConfig.VERSION_CODE).toByteArray(Charsets.UTF_8)
+            if (bytes.size > ModuleCacheFile.MAX_FILE_BYTES) return
+            DurableFiles.writeAtomically(ModuleCacheFile.PATH, bytes)
+        } catch (t: Throwable) {
+            XposedBridge.log("[$TAG] Could not persist module cache: ${t.message}")
+        }
+    }
+
     fun isXposedModule(
         packageName: String,
         appInfo: ApplicationInfo?,
@@ -58,10 +134,12 @@ object ModuleCache {
         }
 
         val cacheKey = "$packageName|$sourceDir"
+        ensurePersistedLoaded()
         apkModuleCache[cacheKey]?.let { return it }
 
         val detected = detectModuleFromAppInfo(packageName, resolvedAppInfo, context, userHandle)
         apkModuleCache[cacheKey] = detected
+        schedulePersist()
         if (detected) {
             XposedBridge.log("[$TAG] Detected Xposed module: $packageName ($sourceDir)")
         }
