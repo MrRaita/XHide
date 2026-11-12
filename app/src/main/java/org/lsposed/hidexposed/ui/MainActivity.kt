@@ -2505,8 +2505,13 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
 
     val profiles = LinkedHashSet<UserHandle>()
     profiles.add(Process.myUserHandle())
+    // Non-null only when the profile query itself succeeded; with the hook active it lists every user.
+    var existingUserIds: Set<Int>? = null
     try {
-        launcherApps?.profiles?.let { profiles.addAll(it) }
+        launcherApps?.profiles?.let { list ->
+            profiles.addAll(list)
+            existingUserIds = list.mapTo(HashSet()) { getUserIdFromHandle(it, userManager) }
+        }
     } catch (_: Throwable) {
     }
     try {
@@ -2516,9 +2521,6 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
 
     val entriesMap = LinkedHashMap<String, AppEntry>()
     val installedPackagesSet = HashSet<String>()
-    // Users whose launcher activities we actually received. Absence of a package is only
-    // meaningful for these; other users may simply be invisible (e.g. hook inactive).
-    val enumeratedUserIds = HashSet<Int>().apply { add(0) }
 
     // Query all launcher activities across all profiles (User 0, User 10 Clone/Work Profile, etc.)
     // Only apps with real launcher activities are included so every entry maps directly to a visible home screen / drawer icon.
@@ -2552,7 +2554,6 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
             if (pkg == "android") continue
 
             val userId = getUserIdFromHandle(info.user, userManager)
-            enumeratedUserIds.add(userId)
             val key = ConfigStore.userKey(userId, pkg)
             if (entriesMap.containsKey(key)) continue
 
@@ -2654,11 +2655,22 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
     } catch (_: Throwable) {
         false
     }
+    val ownUserId = getUserIdFromHandle(Process.myUserHandle(), userManager)
+    val knownUserIds = existingUserIds
     fun isStale(key: String): Boolean {
         val pkg = if (key.contains(":")) key.substringAfter(":") else key
-        if (installedPackagesSet.contains(pkg)) return false
         val keyUserId = if (key.contains(":")) key.substringBefore(":").toIntOrNull() else null
-        return keyUserId == null || enumeratedUserIds.contains(keyUserId)
+        if (keyUserId != null) {
+            if (keyUserId != ownUserId) {
+                // We cannot list another user's full package inventory (seeing some of its launcher
+                // activities is not proof that a package is absent), so only drop rules for users
+                // that no longer exist. A single-entry profile list means the hook did not expand it.
+                val known = knownUserIds ?: return false
+                if (known.size <= 1) return false
+                return !known.contains(keyUserId)
+            }
+        }
+        return !installedPackagesSet.contains(pkg)
     }
     val staleWl = if (hookActive) currentWl.filter { isStale(it) } else emptyList()
     val staleBl = if (hookActive) currentBl.filter { isStale(it) } else emptyList()
