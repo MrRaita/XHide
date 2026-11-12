@@ -32,7 +32,7 @@ If you want any detected module or manager icon to remain visible on your launch
 
 ## Compatibility
 
-- **Android Versions:** Android 11 (API 30) through Android 17 (API 30–37+).
+- **Android Versions:** Android 11 (API 30) through Android 17 (API 37+).
 - **Frameworks:** LSPosed, Vector, and compatible ART hook runtimes.
 - **Scope:** Requires scoping to `System Framework` (`android`).
 
