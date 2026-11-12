@@ -53,6 +53,12 @@ object LauncherHook {
     @Volatile
     private var cachedSelfAppId: Int = -1
 
+    // Incremented (under selfCacheLock) on every companion package lifecycle event. An in-flight
+    // isCallerSelf lookup only publishes its appId if no event happened since it started, so a
+    // removal racing with verification cannot re-publish a stale appId.
+    private val selfCacheLock = Any()
+    private var selfCacheGeneration = 0L
+
     fun install(classLoader: ClassLoader) {
         try {
             val clazz = XposedHelpers.findClassIfExists(TARGET_CLASS, classLoader)
@@ -794,6 +800,11 @@ object LauncherHook {
         val context = getContextFromImpl(serviceObject) ?: return false
         val token = Binder.clearCallingIdentity()
         return try {
+            // Register the watcher and snapshot the lifecycle generation before any lookup, so a
+            // removal broadcast arriving during verification is always observed.
+            val watcherCoversAllUsers = ensureSelfPackageWatcher(context)
+            val generationAtStart = synchronized(selfCacheLock) { selfCacheGeneration }
+
             val pm = context.packageManager
             val pkgs = pm.getPackagesForUid(callingUid)
             val isSelf = pkgs?.contains(ConfigStore.SELF_PACKAGE) == true
@@ -803,10 +814,15 @@ object LauncherHook {
                 return false
             }
 
-            // Only cache once we can guarantee invalidation on uninstall/replace;
-            // otherwise a reassigned appId would inherit IPC and cross-profile privileges.
-            if (ensureSelfPackageWatcher(context)) {
-                cachedSelfAppId = appId
+            // Only cache once we can guarantee invalidation on uninstall/replace, and only if no
+            // lifecycle event happened mid-verification; otherwise a reassigned appId would
+            // inherit IPC and cross-profile privileges.
+            if (watcherCoversAllUsers) {
+                synchronized(selfCacheLock) {
+                    if (selfCacheGeneration == generationAtStart) {
+                        cachedSelfAppId = appId
+                    }
+                }
             }
             true
         } catch (_: Throwable) {
@@ -844,7 +860,10 @@ object LauncherHook {
         val receiver = object : android.content.BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
                 if (intent?.data?.schemeSpecificPart != ConfigStore.SELF_PACKAGE) return
-                cachedSelfAppId = -1
+                synchronized(selfCacheLock) {
+                    selfCacheGeneration++
+                    cachedSelfAppId = -1
+                }
                 XposedBridge.log("[$TAG] Companion package changed (${intent.action}); self-caller cache invalidated")
             }
         }
