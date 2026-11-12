@@ -819,14 +819,20 @@ object LauncherHook {
     @Volatile
     private var selfWatcherRegistered = false
 
+    // True only when the watcher covers every user. A user-scoped fallback receiver cannot
+    // guarantee invalidation when the companion is removed from another user.
+    @Volatile
+    private var selfWatcherAllUsers = false
+
     /**
      * Registers a one-time receiver in `system_server` that drops [cachedSelfAppId] whenever the
      * companion package is removed, replaced, or re-added in any user, forcing re-verification.
-     * Must be called with cleared calling identity. Returns true when the watcher is active.
+     * Must be called with cleared calling identity. Returns true only when the watcher covers all
+     * users, i.e. when it is safe to cache the self-caller appId.
      */
     @Synchronized
     private fun ensureSelfPackageWatcher(context: Context): Boolean {
-        if (selfWatcherRegistered) return true
+        if (selfWatcherRegistered) return selfWatcherAllUsers
         val filter = android.content.IntentFilter().apply {
             addAction(Intent.ACTION_PACKAGE_REMOVED)
             addAction(Intent.ACTION_PACKAGE_FULLY_REMOVED)
@@ -845,18 +851,21 @@ object LauncherHook {
         selfWatcherRegistered = try {
             val allUsers = XposedHelpers.getStaticObjectField(UserHandle::class.java, "ALL") as UserHandle
             XposedHelpers.callMethod(context, "registerReceiverAsUser", receiver, allUsers, filter, null, null)
+            selfWatcherAllUsers = true
             true
         } catch (t: Throwable) {
             XposedBridge.log("[$TAG] registerReceiverAsUser failed, falling back: ${t.message}")
             try {
+                // User-scoped only: still useful for invalidation, but not sufficient to cache.
                 context.registerReceiver(receiver, filter)
+                XposedBridge.log("[$TAG] Self package watcher is user-scoped; self-caller appId will not be cached")
                 true
             } catch (t2: Throwable) {
                 XposedBridge.log("[$TAG] Could not register self package watcher: ${t2.message}")
                 false
             }
         }
-        return selfWatcherRegistered
+        return selfWatcherAllUsers
     }
 
     private fun verifyCallerSignature(pm: PackageManager): Boolean {
