@@ -429,6 +429,8 @@ fun MainScreen(
             bl.contains(uKey) || bl.contains(entry.packageName) -> true
             wl.contains(uKey) || wl.contains(entry.packageName) -> false
             !entry.isXposedModule -> false
+            // Mirrors ConfigStore: XHide is never auto-hidden, only hidden via an explicit blacklist entry.
+            uKey == ConfigStore.SELF_USER0_KEY -> false
             entry.userId == 0 -> autoHide
             else -> autoHide && autoHideClone
         }
