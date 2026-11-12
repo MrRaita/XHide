@@ -1,5 +1,7 @@
 package org.lsposed.hidexposed.data
 
+import android.system.Os
+import android.system.OsConstants
 import java.io.File
 import java.io.FileOutputStream
 
@@ -20,6 +22,23 @@ internal object DurableFiles {
             writeDurably(targetFile, bytes)
             restrictToOwner(targetFile)
             tmpFile.delete()
+            return
+        }
+        // rename(2) only updates the directory entry; it becomes durable once the parent
+        // directory itself is synced.
+        targetFile.parentFile?.let { syncDirectory(it) }
+    }
+
+    /** Best effort: a failed directory sync must not turn a completed rename into an error. */
+    private fun syncDirectory(dir: File) {
+        try {
+            val fd = Os.open(dir.path, OsConstants.O_RDONLY, 0)
+            try {
+                Os.fsync(fd)
+            } finally {
+                Os.close(fd)
+            }
+        } catch (_: Throwable) {
         }
     }
 
