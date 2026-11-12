@@ -2505,13 +2505,8 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
 
     val profiles = LinkedHashSet<UserHandle>()
     profiles.add(Process.myUserHandle())
-    // Non-null only when the profile query itself succeeded; with the hook active it lists every user.
-    var existingUserIds: Set<Int>? = null
     try {
-        launcherApps?.profiles?.let { list ->
-            profiles.addAll(list)
-            existingUserIds = list.mapTo(HashSet()) { getUserIdFromHandle(it, userManager) }
-        }
+        launcherApps?.profiles?.let { profiles.addAll(it) }
     } catch (_: Throwable) {
     }
     try {
@@ -2660,18 +2655,16 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
         false
     }
     val ownUserId = getUserIdFromHandle(Process.myUserHandle(), userManager)
-    val knownUserIds = existingUserIds
     fun isStale(key: String): Boolean {
         val pkg = if (key.contains(":")) key.substringAfter(":") else key
         val keyUserId = if (key.contains(":")) key.substringBefore(":").toIntOrNull() else null
         if (keyUserId != null) {
             if (keyUserId != ownUserId) {
-                // We cannot list another user's full package inventory (seeing some of its launcher
-                // activities is not proof that a package is absent), so only drop rules for users
-                // that no longer exist. A single-entry profile list means the hook did not expand it.
-                val known = knownUserIds ?: return false
-                if (known.size <= 1) return false
-                return !known.contains(keyUserId)
+                // The companion app has no authoritative user list: a successful hook ping does not
+                // prove the profile-expansion hooks are installed, and a device with a work or clone
+                // profile already returns several profiles without them. A user missing from that
+                // list is therefore not proof of deletion, so rules for other users are kept.
+                return false
             }
         }
         // Absence only proves removal when our own package inventory was actually retrieved.
