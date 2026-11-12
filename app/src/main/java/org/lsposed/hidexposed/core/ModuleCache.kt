@@ -199,8 +199,19 @@ object ModuleCache {
         userHandle: UserHandle?
     ): Boolean? {
         // 1. Fast manifest meta-data check (Classic Xposed & Modern LibXposed)
+        // Hook-provided ApplicationInfo often lacks metaData. If the GET_META_DATA re-query also
+        // fails, absence of metadata is unknown rather than proven, so a negative verdict from the
+        // archive check alone must not be persisted.
+        var metadataChecked = false
         try {
-            val meta = appInfo.metaData ?: resolveAppInfoSafely(packageName, context, userHandle)?.metaData
+            val meta = if (appInfo.metaData != null) {
+                metadataChecked = true
+                appInfo.metaData
+            } else {
+                val resolved = resolveAppInfoSafely(packageName, context, userHandle)
+                if (resolved != null) metadataChecked = true
+                resolved?.metaData
+            }
             if (meta != null) {
                 if (meta.containsKey("xposedmodule") ||
                     meta.containsKey("xposedminversion") ||
@@ -234,6 +245,9 @@ object ModuleCache {
             }
         }
 
+        // No archive markers, but metadata could not be inspected: report "unknown" so the
+        // caller does not cache or persist a possibly false negative.
+        if (!metadataChecked) return null
         return false
     }
 
