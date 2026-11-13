@@ -354,16 +354,8 @@ object ConfigStore {
 
         val finalWl = safeWl.toSet()
         val finalBl = safeBl.toSet()
-        rules = HideRules(autoHide, autoHideClone, finalWl, finalBl)
 
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-            .putBoolean("autoHide", autoHide)
-            .putBoolean("autoHideClone", autoHideClone)
-            .putStringSet("whitelist", finalWl)
-            .putStringSet("blacklist", finalBl)
-            .apply()
-
-        return try {
+        val synced = try {
             val cleanChanged = changedPackages.filter { isValidConfigKey(it) }.distinct()
 
             val payload = JSONObject().apply {
@@ -374,12 +366,25 @@ object ConfigStore {
                 put("changed", JSONArray(cleanChanged))
             }.toString()
 
-            val launcherApps = context.getSystemService(LauncherApps::class.java) ?: return false
-            val res = launcherApps.getActivityList("$IPC_UPDATE_PREFIX$payload", Process.myUserHandle())
+            val launcherApps = context.getSystemService(LauncherApps::class.java)
+            val res = launcherApps?.getActivityList("$IPC_UPDATE_PREFIX$payload", Process.myUserHandle())
             res != null && res.isNotEmpty()
         } catch (_: Throwable) {
             false
         }
+
+        // Commit locally only after system_server accepted and persisted the update. Otherwise the
+        // UI reverts its on-screen state while local prefs would keep rules the system never applied.
+        if (synced) {
+            rules = HideRules(autoHide, autoHideClone, finalWl, finalBl)
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                .putBoolean("autoHide", autoHide)
+                .putBoolean("autoHideClone", autoHideClone)
+                .putStringSet("whitelist", finalWl)
+                .putStringSet("blacklist", finalBl)
+                .apply()
+        }
+        return synced
     }
 
     fun exportConfigJson(): String {
