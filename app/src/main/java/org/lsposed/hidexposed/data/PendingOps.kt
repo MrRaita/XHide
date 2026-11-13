@@ -79,6 +79,10 @@ object PendingOps {
     fun changedKeys(ops: List<PendingOp>): List<String> =
         ops.filterIsInstance<PendingOp.Toggle>().map { it.key }.distinct()
 
+    /** True when [ops] change an auto-hide flag, which affects every detected module. */
+    fun touchesAutoHide(ops: List<PendingOp>): Boolean =
+        ops.any { (it is PendingOp.SetAutoHide) or (it is PendingOp.SetAutoHideClone) }
+
     fun encode(ops: List<PendingOp>): String {
         val arr = JSONArray()
         for (op in ops) {

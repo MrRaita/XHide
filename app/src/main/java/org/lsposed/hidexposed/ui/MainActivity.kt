@@ -492,7 +492,9 @@ fun MainScreen(
 
     /** Applies a single edit; queued for later delivery if the hook is inactive. */
     fun syncWithSystem(changedPkgs: List<String>, op: PendingOp) {
-        runSync { ConfigStore.updateRules(context, changedPkgs, op) }
+        // Same module-key input as the flush path, used if a queued auto-hide change is delivered here.
+        val moduleKeys = apps.filter { it.isXposedModule }.map { it.uniqueKey }.distinct()
+        runSync { ConfigStore.updateRules(context, changedPkgs, op, moduleKeys) }
     }
 
     fun refreshState(showToastOnDone: Boolean = false) {

@@ -112,6 +112,13 @@ class PendingOpsTest {
     }
 
     @Test
+    fun touchesAutoHideDetectsFlagChanges() {
+        assertFalse(PendingOps.touchesAutoHide(listOf(toggle("com.a", hide = true))))
+        assertTrue(PendingOps.touchesAutoHide(listOf(toggle("com.a", hide = true), PendingOp.SetAutoHide(false))))
+        assertTrue(PendingOps.touchesAutoHide(listOf(PendingOp.SetAutoHideClone(true))))
+    }
+
+    @Test
     fun encodeDecodeRoundTrip() {
         val ops = listOf(
             toggle("com.a", module = true, hide = true),

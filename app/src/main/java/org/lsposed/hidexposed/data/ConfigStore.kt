@@ -369,13 +369,17 @@ object ConfigStore {
     fun updateRules(
         context: Context,
         changedPackages: List<String>,
-        op: PendingOp
+        op: PendingOp,
+        moduleKeys: List<String> = emptyList()
     ): SyncResult = synchronized(uiSyncLock) {
         val queued = pendingOps
         val all = PendingOps.enqueue(queued, op)
             ?: return@synchronized SyncResult(SyncStatus.TOO_LARGE, effectiveRules())
         val next = PendingOps.applyAll(rules, all)
-        val changed = (PendingOps.changedKeys(queued) + changedPackages).distinct()
+        // A queued auto-hide change affects every detected module, so launchers must be told about
+        // all module keys when it is delivered here, exactly as the flush path does.
+        val queuedModuleKeys = if (PendingOps.touchesAutoHide(queued)) moduleKeys else emptyList()
+        val changed = (PendingOps.changedKeys(queued) + queuedModuleKeys + changedPackages).distinct()
         // On success the delivered queue is cleared in the same SharedPreferences write as the rules.
         var status = saveUiPrefsAndSyncLocked(
             context, next.autoHide, next.autoHideClone, next.whitelist, next.blacklist, changed,
