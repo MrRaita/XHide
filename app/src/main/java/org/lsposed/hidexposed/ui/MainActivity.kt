@@ -452,12 +452,16 @@ fun MainScreen(
         transform: (ConfigStore.HideRules) -> ConfigStore.HideRules
     ) {
         scope.launch {
-            val committed = withContext(Dispatchers.IO) {
+            val result = withContext(Dispatchers.IO) {
                 ConfigStore.updateRules(context, changedPkgs, transform)
             }
-            showRules(committed ?: ConfigStore.currentRules())
-            if (committed == null) {
-                Toast.makeText(context, strings.syncFailedToast, Toast.LENGTH_SHORT).show()
+            showRules(result.rules)
+            when (result.status) {
+                ConfigStore.SyncStatus.OK -> Unit
+                ConfigStore.SyncStatus.TOO_LARGE ->
+                    Toast.makeText(context, strings.configTooLargeToast, Toast.LENGTH_LONG).show()
+                ConfigStore.SyncStatus.FAILED ->
+                    Toast.makeText(context, strings.syncFailedToast, Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -2637,7 +2641,11 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
     // Re-reads the current rules under the shared sync lock, so a user edit made while the list
     // was loading is never overwritten by an outdated snapshot.
     if (hookActive) {
-        ConfigStore.purgeStaleRules(context) { isStale(it) }
+        val status = ConfigStore.purgeStaleRules(context, ::isStale)
+        if (status != ConfigStore.SyncStatus.OK) {
+            // Not fatal: stale keys are retried on the next refresh.
+            android.util.Log.w("XHide", "Stale-rule cleanup was not applied: $status")
+        }
     }
 
     val collator = java.text.Collator.getInstance(java.util.Locale.getDefault()).apply {
