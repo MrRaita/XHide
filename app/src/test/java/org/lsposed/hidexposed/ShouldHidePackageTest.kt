@@ -3,8 +3,12 @@ package org.lsposed.hidexposed
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import org.lsposed.hidexposed.data.ConfigStore
 
 /**
@@ -14,6 +18,15 @@ import org.lsposed.hidexposed.data.ConfigStore
  * ConfigStore is a singleton, so every test rebuilds its full state via [setup].
  */
 class ShouldHidePackageTest {
+
+    @get:Rule
+    val tmp = TemporaryFolder()
+
+    @Before
+    fun redirectSystemConfig() {
+        // Host machines have no /data/system; persist into a temp dir so updates can succeed.
+        ConfigStore.systemConfigPath = tmp.newFolder().resolve("hidexposed_config.json").path
+    }
 
     private fun setup(
         autoHide: Boolean = true,
@@ -27,7 +40,7 @@ class ShouldHidePackageTest {
             put("whitelist", JSONArray(whitelist))
             put("blacklist", JSONArray(blacklist))
         }
-        ConfigStore.applySystemIpcUpdate(json.toString())
+        assertNotNull(ConfigStore.applySystemIpcUpdate(json.toString()))
     }
 
     @Test

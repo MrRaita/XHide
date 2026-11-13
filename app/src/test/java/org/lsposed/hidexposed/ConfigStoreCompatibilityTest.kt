@@ -4,11 +4,25 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import org.lsposed.hidexposed.data.ConfigStore
 
 class ConfigStoreCompatibilityTest {
+
+    @get:Rule
+    val tmp = TemporaryFolder()
+
+    @Before
+    fun redirectSystemConfig() {
+        // Host machines have no /data/system; persist into a temp dir so updates can succeed.
+        ConfigStore.systemConfigPath = tmp.newFolder().resolve("hidexposed_config.json").path
+    }
 
     @Test
     fun testMultiUserKeyGeneration() {
@@ -65,8 +79,42 @@ class ConfigStoreCompatibilityTest {
     @Test
     fun testSafeBinderLimitRejection() {
         val hugePayload = "A".repeat(100 * 1024) // Exceeds safe 96 KB threshold
-        val changed = ConfigStore.applySystemIpcUpdate(hugePayload)
-        assertTrue(changed.isEmpty())
+        assertNull(ConfigStore.applySystemIpcUpdate(hugePayload))
+    }
+
+    @Test
+    fun malformedPayloadIsRejected() {
+        assertNull(ConfigStore.applySystemIpcUpdate("{not json"))
+    }
+
+    @Test
+    fun successfulUpdateIsPersisted() {
+        val payload = JSONObject().apply {
+            put("autoHide", false)
+            put("blacklist", JSONArray(listOf("0:com.persisted")))
+        }.toString()
+        assertNotNull(ConfigStore.applySystemIpcUpdate(payload))
+        val onDisk = JSONObject(java.io.File(ConfigStore.systemConfigPath).readText())
+        assertFalse(onDisk.getBoolean("autoHide"))
+        assertEquals("0:com.persisted", onDisk.getJSONArray("blacklist").getString(0))
+    }
+
+    @Test
+    fun persistenceFailureKeepsPreviousRules() {
+        val before = JSONObject().apply {
+            put("blacklist", JSONArray(listOf("0:com.before")))
+        }.toString()
+        assertNotNull(ConfigStore.applySystemIpcUpdate(before))
+
+        // Point persistence at a directory that does not exist so the atomic write fails.
+        ConfigStore.systemConfigPath = tmp.root.resolve("missing/dir/config.json").path
+        val after = JSONObject().apply {
+            put("blacklist", JSONArray(listOf("0:com.after")))
+        }.toString()
+        assertNull(ConfigStore.applySystemIpcUpdate(after))
+
+        assertTrue(ConfigStore.shouldHidePackage("com.before", 0, false))
+        assertFalse(ConfigStore.shouldHidePackage("com.after", 0, false))
     }
 
     @Test

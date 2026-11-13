@@ -49,6 +49,8 @@ object LauncherHook {
     private const val USER_MANAGER_SERVICE_CLASS = "com.android.server.pm.UserManagerService"
     private const val EXTRA_ALL_USERS_QUERY = "hidexposed_all_users_query"
     private const val PER_USER_RANGE = 100000
+    // Not a valid package name, so a launcher-activity query for it always returns an empty list.
+    private const val IPC_REJECTED_PACKAGE = "__hidexposed_ipc_rejected__"
 
     @Volatile
     private var cachedSelfAppId: Int = -1
@@ -316,8 +318,15 @@ object LauncherHook {
                                 targetPackage.startsWith(ConfigStore.IPC_UPDATE_PREFIX) -> {
                                     val payload = targetPackage.removePrefix(ConfigStore.IPC_UPDATE_PREFIX)
                                     val changedPackages = ConfigStore.applySystemIpcUpdate(payload)
-                                    notifyLaunchersOfChanges(param.thisObject, changedPackages, userHandle)
-                                    param.args[1] = ConfigStore.SELF_PACKAGE
+                                    if (changedPackages == null) {
+                                        // Rejected or not persisted: query a package that cannot exist so
+                                        // the UI receives an empty list, reports failure and reverts.
+                                        param.args[1] = IPC_REJECTED_PACKAGE
+                                        XposedBridge.log("[$TAG] IPC config update rejected (invalid payload or persistence failure)")
+                                    } else {
+                                        notifyLaunchersOfChanges(param.thisObject, changedPackages, userHandle)
+                                        param.args[1] = ConfigStore.SELF_PACKAGE
+                                    }
                                 }
                             }
                         }

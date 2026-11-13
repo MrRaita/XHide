@@ -59,7 +59,12 @@ object ConfigStore {
     const val IPC_GET_ALL_USERS = "${IPC_PREFIX}all_users"
     const val IPC_UPDATE_PREFIX = "${IPC_PREFIX}update:"
 
-    private const val SYSTEM_CONFIG_PATH = "/data/system/hidexposed_config.json"
+    /**
+     * Location of the persisted system config. Only overridden by host-side unit tests, which
+     * have no `/data/system` and need writes to succeed or fail on demand.
+     */
+    @Volatile
+    internal var systemConfigPath: String = "/data/system/hidexposed_config.json"
     private const val PREFS_NAME = "hidexposed_prefs"
     private const val MAX_IPC_PAYLOAD_CHARS = 96 * 1024 // Safe 96 KB limit avoiding Binder TransactionTooLargeException
     private const val MAX_ENTRIES = 4096
@@ -206,19 +211,25 @@ object ConfigStore {
 
     /**
      * Parses an IPC update payload sent by the UI app to `system_server`.
-     * Returns the list of affected package names so `LauncherAppsImpl` can notify launchers across all users.
+     * Returns the list of affected package names so `LauncherAppsImpl` can notify launchers across all users,
+     * or null when the update was rejected (oversized or malformed payload, or the new rules could not be
+     * persisted). On null the previously published rules stay in effect.
      */
     @Synchronized
-    fun applySystemIpcUpdate(payload: String): List<String> {
-        if (payload.length > MAX_IPC_PAYLOAD_CHARS) return emptyList()
+    fun applySystemIpcUpdate(payload: String): List<String>? {
+        if (payload.length > MAX_IPC_PAYLOAD_CHARS) return null
         return try {
             val json = JSONObject(payload)
-            // Zero-race atomic reference swap: concurrent Binder threads never see a partial update
             val newRules = parseRules(json)
+
+            // Persist first and publish only on success, so memory, disk and the UI never diverge:
+            // an unpersisted update would otherwise be reported as applied and silently revert on
+            // the next system_server restart.
+            if (!saveToSystemFile(newRules)) return null
+
+            // Zero-race atomic reference swap: concurrent Binder threads never see a partial update
             rules = newRules
             initializedInSystem = true
-
-            saveToSystemFile(newRules)
 
             val changed = mutableSetOf<String>()
             val changedArray = json.optJSONArray("changed")
@@ -233,24 +244,27 @@ object ConfigStore {
             }
             changed.toList()
         } catch (_: Throwable) {
-            emptyList()
+            null
         }
     }
 
     private fun loadFromSystemFile() {
         try {
-            val file = File(SYSTEM_CONFIG_PATH)
+            val file = File(systemConfigPath)
             if (!file.exists() || !file.canRead() || file.length() > MAX_IPC_PAYLOAD_CHARS) return
             rules = parseRules(JSONObject(file.readText()))
         } catch (_: Throwable) {
         }
     }
 
-    private fun saveToSystemFile(snapshot: HideRules) {
-        try {
+    /** Returns true only when the snapshot was durably written; the previous file is kept otherwise. */
+    private fun saveToSystemFile(snapshot: HideRules): Boolean {
+        return try {
             val bytes = rulesToJson(snapshot).toString().toByteArray(Charsets.UTF_8)
-            DurableFiles.writeAtomically(SYSTEM_CONFIG_PATH, bytes)
+            DurableFiles.writeAtomically(systemConfigPath, bytes)
+            true
         } catch (_: Throwable) {
+            false
         }
     }
 
