@@ -143,4 +143,37 @@ class ConfigStoreCompatibilityTest {
         assertFalse(ConfigStore.isValidConfigKey("../../../etc/shadow"))
         assertFalse(ConfigStore.isValidConfigKey("invalid key with spaces"))
     }
+
+    @Test
+    fun systemConfigRoundTripsThroughIpcEncoding() {
+        val payload = JSONObject().apply {
+            put("autoHide", false)
+            put("autoHideClone", true)
+            put("blacklist", JSONArray(listOf("10:com.youtube")))
+        }.toString()
+        assertNotNull(ConfigStore.applySystemIpcUpdate(payload))
+        val decoded = ConfigStore.decodeSystemConfig(ConfigStore.systemConfigJson())!!
+        assertFalse(decoded.autoHide)
+        assertTrue(decoded.blacklist.contains("10:com.youtube"))
+        assertTrue(decoded.whitelist.contains(ConfigStore.SELF_USER0_KEY))
+    }
+
+    @Test
+    fun malformedSystemConfigDecodesToNull() {
+        assertNull(ConfigStore.decodeSystemConfig(null))
+        assertNull(ConfigStore.decodeSystemConfig(""))
+        assertNull(ConfigStore.decodeSystemConfig("{not json"))
+    }
+
+    @Test
+    fun configReplyIsClassifiedConservatively() {
+        val json = """{"autoHide":true,"autoHideClone":true,"whitelist":[],"blacklist":["0:com.x"]}"""
+        assertTrue(ConfigStore.classifyConfigReply(false, json) { true } is ConfigStore.ConfigRead.Ok)
+        // Empty reply: older hook if it still answers pings, otherwise no hook at all.
+        assertTrue(ConfigStore.classifyConfigReply(true, null) { true } is ConfigStore.ConfigRead.Unsupported)
+        assertTrue(ConfigStore.classifyConfigReply(true, null) { false } is ConfigStore.ConfigRead.Unreachable)
+        // A reply without valid config is a failed read, never a reason to proceed.
+        assertTrue(ConfigStore.classifyConfigReply(false, null) { true } is ConfigStore.ConfigRead.Failed)
+        assertTrue(ConfigStore.classifyConfigReply(false, "{bad") { true } is ConfigStore.ConfigRead.Failed)
+    }
 }
