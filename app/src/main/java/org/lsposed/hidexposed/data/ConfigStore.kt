@@ -380,15 +380,44 @@ object ConfigStore {
     @Volatile
     private var restoredNotice = false
 
-    private fun readSystemConfig(context: Context): HideRules? {
-        return try {
-            val launcherApps = context.getSystemService(LauncherApps::class.java) ?: return null
-            val res = launcherApps.getActivityList(IPC_GET_CONFIG, Process.myUserHandle())
-            val meta = res?.firstOrNull()?.applicationInfo?.metaData
-            decodeSystemConfig(meta?.getString(IPC_CONFIG_META_KEY))
+    /** Outcome of a get_config request. Only [Failed] blocks writes. */
+    internal sealed class ConfigRead {
+        class Ok(val rules: HideRules) : ConfigRead()
+
+        /** The hook answers pings but not get_config: an older hook without the command. */
+        object Unsupported : ConfigRead()
+
+        /** No hook answers at all: writes fail and are queued, so nothing can be overwritten. */
+        object Unreachable : ConfigRead()
+
+        /** A transport error or a reply without valid config data. */
+        object Failed : ConfigRead()
+    }
+
+    /**
+     * Classifies a get_config reply. A new hook always answers with XHide's activity carrying the
+     * config, so an empty reply means either an older hook (ping still answered) or no hook at all.
+     * A non-empty reply without parseable config is a failed read, never "unsupported".
+     */
+    internal fun classifyConfigReply(replyEmpty: Boolean, configJson: String?, hookAnswersPing: () -> Boolean): ConfigRead {
+        if (replyEmpty) return if (hookAnswersPing()) ConfigRead.Unsupported else ConfigRead.Unreachable
+        val rules = decodeSystemConfig(configJson) ?: return ConfigRead.Failed
+        return ConfigRead.Ok(rules)
+    }
+
+    private fun readSystemConfig(context: Context): ConfigRead {
+        val res = try {
+            val launcherApps = context.getSystemService(LauncherApps::class.java) ?: return ConfigRead.Failed
+            launcherApps.getActivityList(IPC_GET_CONFIG, Process.myUserHandle())
         } catch (_: Throwable) {
-            null
+            return ConfigRead.Failed
         }
+        val json = try {
+            res?.firstOrNull()?.applicationInfo?.metaData?.getString(IPC_CONFIG_META_KEY)
+        } catch (_: Throwable) {
+            return ConfigRead.Failed
+        }
+        return classifyConfigReply(res.isNullOrEmpty(), json) { pingSystemHook(context) }
     }
 
     /**
@@ -398,11 +427,26 @@ object ConfigStore {
      * Without this, the first sync after a reinstall would overwrite every system rule with the
      * empty local state. Queued edits are kept and replayed on top.
      */
-    private fun ensureAdoptedLocked(context: Context) {
-        if (adoptedSystemRules) return
-        val sys = readSystemConfig(context) ?: return
+    /**
+     * Returns false when the system config could not be read although a hook answered; callers
+     * must then send nothing, since a write based on unverified local rules could erase the
+     * persisted system rules. Queued edits are kept for a later attempt.
+     */
+    private fun ensureAdoptedLocked(context: Context): Boolean {
+        if (adoptedSystemRules) return true
+        val sys = when (val read = readSystemConfig(context)) {
+            is ConfigRead.Ok -> read.rules
+            // Older hook without get_config: keep the previous behavior.
+            ConfigRead.Unsupported -> {
+                adoptedSystemRules = true
+                return true
+            }
+            // No hook: any write fails and is queued, so nothing can be overwritten. Retry later.
+            ConfigRead.Unreachable -> return true
+            ConfigRead.Failed -> return false
+        }
         adoptedSystemRules = true
-        if (sys == rules) return
+        if (sys == rules) return true
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
             .putBoolean("autoHide", sys.autoHide)
             .putBoolean("autoHideClone", sys.autoHideClone)
@@ -411,6 +455,7 @@ object ConfigStore {
             .apply()
         rules = sys
         restoredNotice = true
+        return true
     }
 
     /** Adopts the system rules if not done yet in this process. */
@@ -446,7 +491,7 @@ object ConfigStore {
         op: PendingOp,
         moduleKeys: List<String> = emptyList()
     ): SyncResult = synchronized(uiSyncLock) {
-        ensureAdoptedLocked(context)
+        if (!ensureAdoptedLocked(context)) return@synchronized SyncResult(SyncStatus.FAILED, effectiveRules())
         val queued = pendingOps
         val all = PendingOps.enqueue(queued, op)
             ?: return@synchronized SyncResult(SyncStatus.TOO_LARGE, effectiveRules())
@@ -500,7 +545,7 @@ object ConfigStore {
      */
     fun replaceRules(context: Context, changedPackages: List<String>, newRules: HideRules): SyncResult =
         synchronized(uiSyncLock) {
-            ensureAdoptedLocked(context)
+            if (!ensureAdoptedLocked(context)) return@synchronized SyncResult(SyncStatus.FAILED, effectiveRules())
             // On success the superseded queue is cleared in the same SharedPreferences write.
             val status = saveUiPrefsAndSyncLocked(
                 context, newRules.autoHide, newRules.autoHideClone, newRules.whitelist, newRules.blacklist,
@@ -515,7 +560,7 @@ object ConfigStore {
      * can never succeed; FAILED keeps it for the next attempt. An empty queue returns OK.
      */
     fun flushPendingOps(context: Context, changedPackages: List<String>): SyncStatus = synchronized(uiSyncLock) {
-        ensureAdoptedLocked(context)
+        if (!ensureAdoptedLocked(context)) return@synchronized SyncStatus.FAILED
         val queued = pendingOps
         if (queued.isEmpty()) return@synchronized SyncStatus.OK
         val next = PendingOps.applyAll(rules, queued)
@@ -541,7 +586,7 @@ object ConfigStore {
      * overwritten by an outdated snapshot. Returns OK when nothing was stale or the sync succeeded.
      */
     fun purgeStaleRules(context: Context, isStale: (String) -> Boolean): SyncStatus = synchronized(uiSyncLock) {
-        ensureAdoptedLocked(context)
+        if (!ensureAdoptedLocked(context)) return@synchronized SyncStatus.FAILED
         val current = rules
         val staleWl = current.whitelist.filter(isStale)
         val staleBl = current.blacklist.filter(isStale)
