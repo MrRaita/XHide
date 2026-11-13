@@ -60,17 +60,15 @@ object PendingOps {
     private const val VERSION = 1
 
     /**
-     * Appends [op] to [ops]. An earlier [PendingOp.Toggle] for the same key is dropped, since a
-     * later toggle fully determines that key's state. Returns null when the queue is full.
+     * Appends [op] to [ops]. Returns null when the queue is full.
+     *
+     * Earlier toggles are never dropped: a toggle does not fully determine its key's state (hiding an
+     * auto-hidden module keeps an existing blacklist entry, for example), so removing an earlier one
+     * can change the replayed result. Keeping every op makes delivery identical to ordered replay.
      */
     fun enqueue(ops: List<PendingOp>, op: PendingOp): List<PendingOp>? {
-        val compacted = if (op is PendingOp.Toggle) {
-            ops.filterNot { it is PendingOp.Toggle && it.key == op.key }
-        } else {
-            ops
-        }
-        if (compacted.size >= MAX_PENDING_OPS) return null
-        return compacted + op
+        if (ops.size >= MAX_PENDING_OPS) return null
+        return ops + op
     }
 
     /** Replays [ops] on top of [base], in order. */

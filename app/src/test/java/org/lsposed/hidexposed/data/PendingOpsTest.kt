@@ -71,12 +71,32 @@ class PendingOpsTest {
     }
 
     @Test
-    fun enqueueDropsEarlierToggleForSameKey() {
+    fun enqueueKeepsEveryOpInOrder() {
         var q: List<PendingOp> = emptyList()
         q = PendingOps.enqueue(q, toggle("com.x", hide = true))!!
         q = PendingOps.enqueue(q, PendingOp.SetAutoHide(false))!!
         q = PendingOps.enqueue(q, toggle("com.x", hide = false))!!
-        assertEquals(listOf(PendingOp.SetAutoHide(false), toggle("com.x", hide = false)), q)
+        assertEquals(
+            listOf(toggle("com.x", hide = true), PendingOp.SetAutoHide(false), toggle("com.x", hide = false)),
+            q
+        )
+    }
+
+    @Test
+    fun queuedReplayMatchesOrderedReplayWithExistingBlacklistEntry() {
+        // Module explicitly blacklisted while auto-hide is on.
+        val start = base.copy(blacklist = setOf("0:com.mod"))
+        val ops = listOf(
+            toggle("com.mod", module = true, hide = false),
+            toggle("com.mod", module = true, hide = true),
+            PendingOp.SetAutoHide(false)
+        )
+        var q: List<PendingOp> = emptyList()
+        for (op in ops) q = PendingOps.enqueue(q, op)!!
+        val ordered = ops.fold(start) { r, op -> op.applyTo(r) }
+        assertEquals(ordered, PendingOps.applyAll(start, q))
+        // Unhide removed the blacklist entry, so the module is visible once auto-hide is off.
+        assertFalse(PendingOps.applyAll(start, q).blacklist.contains("0:com.mod"))
     }
 
     @Test
