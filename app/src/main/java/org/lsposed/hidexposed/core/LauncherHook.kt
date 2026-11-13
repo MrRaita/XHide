@@ -800,9 +800,9 @@ object LauncherHook {
         val context = getContextFromImpl(serviceObject) ?: return false
         val token = Binder.clearCallingIdentity()
         return try {
-            // Register the watcher and snapshot the lifecycle generation before any lookup, so a
-            // removal broadcast arriving during verification is always observed.
-            val watcherCoversAllUsers = ensureSelfPackageWatcher(context)
+            // Lock-free snapshot before any lookup. Launcher queries hit this path on every call
+            // until the appId is cached, so it must never block on watcher registration.
+            val watcherReadyAtStart = selfWatcherAllUsers
             val generationAtStart = synchronized(selfCacheLock) { selfCacheGeneration }
 
             val pm = context.packageManager
@@ -814,10 +814,14 @@ object LauncherHook {
                 return false
             }
 
+            // Registration runs off the Binder thread; until it completes, caching stays disabled
+            // and every call goes through full verification.
+            if (!watcherReadyAtStart) scheduleSelfPackageWatcher(context)
+
             // Only cache once we can guarantee invalidation on uninstall/replace, and only if no
             // lifecycle event happened mid-verification; otherwise a reassigned appId would
             // inherit IPC and cross-profile privileges.
-            if (watcherCoversAllUsers) {
+            if (watcherReadyAtStart) {
                 synchronized(selfCacheLock) {
                     if (selfCacheGeneration == generationAtStart) {
                         cachedSelfAppId = appId
@@ -834,6 +838,34 @@ object LauncherHook {
 
     @Volatile
     private var selfWatcherRegistered = false
+
+    private val selfWatcherScheduled = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Registers the package watcher on a background thread, at most once at a time. */
+    private fun scheduleSelfPackageWatcher(context: Context) {
+        if (selfWatcherRegistered) return
+        if (!selfWatcherScheduled.compareAndSet(false, true)) return
+        try {
+            Thread({
+                val token = Binder.clearCallingIdentity()
+                try {
+                    ensureSelfPackageWatcher(context)
+                } catch (t: Throwable) {
+                    XposedBridge.log("[$TAG] Self package watcher registration failed: ${t.message}")
+                } finally {
+                    Binder.restoreCallingIdentity(token)
+                    // Allow a retry later if registration did not happen.
+                    if (!selfWatcherRegistered) selfWatcherScheduled.set(false)
+                }
+            }, "XHide-SelfWatcher").apply {
+                isDaemon = true
+                start()
+            }
+        } catch (t: Throwable) {
+            selfWatcherScheduled.set(false)
+            XposedBridge.log("[$TAG] Could not start self watcher thread: ${t.message}")
+        }
+    }
 
     // True only when the watcher covers every user. A user-scoped fallback receiver cannot
     // guarantee invalidation when the companion is removed from another user.
