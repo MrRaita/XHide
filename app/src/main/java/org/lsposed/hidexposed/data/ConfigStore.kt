@@ -537,8 +537,12 @@ object ConfigStore {
         return SyncStatus.OK
     }
 
+    /**
+     * Exports what the user sees: committed rules plus queued edits not yet delivered, so a backup
+     * taken while the hook is inactive still contains every pending change.
+     */
     fun exportConfigJson(): String {
-        return rulesToJson(rules).toString(2)
+        return rulesToJson(effectiveRules()).toString(2)
     }
 
     private fun rulesToJson(snapshot: HideRules): JSONObject = JSONObject().apply {
