@@ -155,6 +155,8 @@ import org.lsposed.hidexposed.core.AppDiagnostics
 import org.lsposed.hidexposed.core.ModuleCache
 import org.lsposed.hidexposed.data.AppSortMode
 import org.lsposed.hidexposed.data.ConfigStore
+import org.lsposed.hidexposed.data.PendingOp
+import org.lsposed.hidexposed.data.applyTo
 import org.lsposed.hidexposed.ui.theme.HideXposedTheme
 import android.util.LruCache
 import java.io.File
@@ -443,12 +445,6 @@ fun MainScreen(
         blacklist = r.blacklist
     }
 
-    /**
-     * Applies [transform] to the latest committed rules inside ConfigStore's sync lock. Callers
-     * describe a change instead of sending a full list, so concurrent edits and the stale-rule
-     * cleanup cannot undo each other. The on-screen state is replaced by the committed result,
-     * or by the unchanged committed rules when the system rejected the update.
-     */
     // Fair (FIFO) mutex taken on the main dispatcher in submission order, so edits commit in the
     // order the user made them. ConfigStore's monitor lock gives no ordering guarantee between
     // IO threads; it only coordinates with the stale-rule cleanup.
@@ -458,30 +454,44 @@ fun MainScreen(
     // are pending, the on-screen state holds their optimistic values and must not be replaced.
     var pendingSyncs by remember { mutableStateOf(0) }
 
-    fun syncWithSystem(
-        changedPkgs: List<String>,
-        transform: (ConfigStore.HideRules) -> ConfigStore.HideRules
+    // Number of edits queued while the hook was inactive; mirrors ConfigStore.pendingCount().
+    var pendingCount by remember { mutableStateOf(ConfigStore.pendingCount()) }
+
+    /**
+     * Runs [action] (a ConfigStore sync) on IO under the fair mutex, then shows the effective rules
+     * (committed plus queued) once no other edit is pending, and reports the outcome. [onOk] runs
+     * only when the change was applied to the system.
+     */
+    fun runSync(
+        onOk: (() -> Unit)? = null,
+        action: () -> ConfigStore.SyncResult
     ) {
         pendingSyncs++
         scope.launch {
             val result = syncMutex.withLock {
-                withContext(Dispatchers.IO) {
-                    ConfigStore.updateRules(context, changedPkgs, transform)
-                }
+                withContext(Dispatchers.IO) { action() }
             }
             pendingSyncs--
             // result.rules is the snapshot taken inside the lock; a later cleanup commit may already
-            // have superseded it. Show the latest committed rules, and only once no edit is pending
+            // have superseded it. Show the latest effective rules, and only once no edit is pending
             // so a queued edit's optimistic state does not flicker back.
-            if (pendingSyncs == 0) showRules(ConfigStore.currentRules())
+            if (pendingSyncs == 0) showRules(ConfigStore.effectiveRules())
+            pendingCount = ConfigStore.pendingCount()
             when (result.status) {
-                ConfigStore.SyncStatus.OK -> Unit
+                ConfigStore.SyncStatus.OK -> onOk?.invoke()
+                ConfigStore.SyncStatus.QUEUED ->
+                    Toast.makeText(context, strings.changeQueuedToast, Toast.LENGTH_SHORT).show()
                 ConfigStore.SyncStatus.TOO_LARGE ->
                     Toast.makeText(context, strings.configTooLargeToast, Toast.LENGTH_LONG).show()
                 ConfigStore.SyncStatus.FAILED ->
                     Toast.makeText(context, strings.syncFailedToast, Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    /** Applies a single edit; queued for later delivery if the hook is inactive. */
+    fun syncWithSystem(changedPkgs: List<String>, op: PendingOp) {
+        runSync { ConfigStore.updateRules(context, changedPkgs, op) }
     }
 
     fun refreshState(showToastOnDone: Boolean = false) {
@@ -504,7 +514,7 @@ fun MainScreen(
                 apps = loadedApps
                 // The app list loader may have purged stale rules; show what is actually committed,
                 // unless an edit is still pending (it refreshes the state itself when it finishes).
-                if (pendingSyncs == 0) showRules(ConfigStore.currentRules())
+                if (pendingSyncs == 0) showRules(ConfigStore.effectiveRules())
                 defaultLauncher = launcher
 
                 val userManager = context.getSystemService(UserManager::class.java)
@@ -576,37 +586,16 @@ fun MainScreen(
     }
 
     fun updateAppHidden(entry: AppEntry, hideInLauncher: Boolean) {
-        fun applyToggle(r: ConfigStore.HideRules): ConfigStore.HideRules {
-            val newWl = r.whitelist.toMutableSet()
-            val newBl = r.blacklist.toMutableSet()
-            val uKey = entry.uniqueKey
-
-            newWl.remove(entry.packageName)
-            newBl.remove(entry.packageName)
-
-            // ConfigStore force-whitelists XHide itself unless it is explicitly blacklisted, so auto-hide
-            // never applies to it. Treat it as visible-by-default so hiding writes a blacklist entry.
-            val isSelf = uKey == ConfigStore.SELF_USER0_KEY
-            val autoHideForUser = if (entry.userId == 0) r.autoHide else (r.autoHide and r.autoHideClone)
-            val defaultHidden = !isSelf and entry.isXposedModule and autoHideForUser
-
-            if (hideInLauncher) {
-                newWl.remove(uKey)
-                if (!defaultHidden) {
-                    newBl.add(uKey)
-                }
-            } else {
-                newBl.remove(uKey)
-                if (defaultHidden) {
-                    newWl.add(uKey)
-                }
-            }
-            return r.copy(whitelist = newWl, blacklist = newBl)
-        }
-
-        // Optimistic update from the on-screen state; replaced by the committed result.
-        showRules(applyToggle(ConfigStore.HideRules(autoHideModules, autoHideCloneModules, whitelist, blacklist)))
-        syncWithSystem(changedPkgs = listOf(entry.uniqueKey)) { applyToggle(it) }
+        val op = PendingOp.Toggle(
+            key = entry.uniqueKey,
+            packageName = entry.packageName,
+            userId = entry.userId,
+            isXposedModule = entry.isXposedModule,
+            hide = hideInLauncher
+        )
+        // Optimistic update from the on-screen state; replaced by the effective rules afterwards.
+        showRules(op.applyTo(ConfigStore.HideRules(autoHideModules, autoHideCloneModules, whitelist, blacklist)))
+        syncWithSystem(changedPkgs = listOf(entry.uniqueKey), op = op)
     }
 
     // SAF File Launchers for JSON Backup Export & Import
@@ -708,8 +697,9 @@ fun MainScreen(
                         )
                         showRules(defaults)
                         val allPkgs = apps.map { it.uniqueKey }.distinct()
-                        syncWithSystem(changedPkgs = allPkgs) { defaults }
-                        Toast.makeText(context, strings.resetDoneToast, Toast.LENGTH_SHORT).show()
+                        runSync(onOk = {
+                            Toast.makeText(context, strings.resetDoneToast, Toast.LENGTH_SHORT).show()
+                        }) { ConfigStore.replaceRules(context, allPkgs, defaults) }
                     }
                 ) {
                     Text(text = strings.resetConfirmBtn, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
@@ -750,8 +740,9 @@ fun MainScreen(
                         pendingImport = null
 
                         val allPkgs = apps.map { it.uniqueKey }.distinct()
-                        syncWithSystem(changedPkgs = allPkgs) { imported }
-                        Toast.makeText(context, strings.importedToast, Toast.LENGTH_SHORT).show()
+                        runSync(onOk = {
+                            Toast.makeText(context, strings.importedToast, Toast.LENGTH_SHORT).show()
+                        }) { ConfigStore.replaceRules(context, allPkgs, imported) }
                     }
                 ) {
                     Text(text = strings.importConfirmBtn, fontWeight = FontWeight.Bold)
@@ -925,7 +916,7 @@ fun MainScreen(
                         onToggleAutoHide = { checked ->
                             autoHideModules = checked
                             val modPkgs = apps.filter { it.isXposedModule }.map { it.uniqueKey }.distinct()
-                            syncWithSystem(changedPkgs = modPkgs) { it.copy(autoHide = checked) }
+                            syncWithSystem(changedPkgs = modPkgs, op = PendingOp.SetAutoHide(checked))
                         },
                         onToggleAutoHideClone = { checked ->
                             autoHideCloneModules = checked
@@ -933,7 +924,7 @@ fun MainScreen(
                                 .filter { it.userId != 0 }
                                 .map { it.uniqueKey }
                                 .distinct()
-                            syncWithSystem(changedPkgs = modPkgs) { it.copy(autoHideClone = checked) }
+                            syncWithSystem(changedPkgs = modPkgs, op = PendingOp.SetAutoHideClone(checked))
                         },
                         onToggleShowSystemApps = { showSys ->
                             showSystemApps = showSys

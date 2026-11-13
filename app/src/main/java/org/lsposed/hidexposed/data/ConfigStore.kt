@@ -66,6 +66,7 @@ object ConfigStore {
     @Volatile
     internal var systemConfigPath: String = "/data/system/hidexposed_config.json"
     private const val PREFS_NAME = "hidexposed_prefs"
+    private const val PENDING_OPS_KEY = "pendingOps"
     private const val MAX_IPC_PAYLOAD_CHARS = 96 * 1024 // Safe 96 KB limit avoiding Binder TransactionTooLargeException
     private const val MAX_ENTRIES = 4096
     private val VALID_KEY_REGEX = Regex("^(?:\\d+:)?[a-zA-Z0-9._]{1,200}$")
@@ -305,6 +306,7 @@ object ConfigStore {
             cleanWl.remove(SELF_USER0_KEY)
         }
 
+        pendingOps = PendingOps.decode(prefs.getString(PENDING_OPS_KEY, null))
         rules = HideRules(
             autoHide = prefs.getBoolean("autoHide", true),
             autoHideClone = prefs.getBoolean("autoHideClone", true),
@@ -352,27 +354,100 @@ object ConfigStore {
     /** The rules last committed locally (after the system accepted them). */
     fun currentRules(): HideRules = rules
 
-    enum class SyncStatus { OK, TOO_LARGE, FAILED }
+    enum class SyncStatus { OK, QUEUED, TOO_LARGE, FAILED }
 
-    /** Outcome of a UI-side sync; [rules] is always the currently committed rule set. */
+    /** Outcome of a UI-side sync; [rules] are the effective rules (committed plus queued edits). */
     class SyncResult(val status: SyncStatus, val rules: HideRules)
 
     /**
-     * Applies [transform] to the current rules and syncs the result, all under the sync lock, so
-     * concurrent callers can never overwrite each other's changes with an outdated snapshot.
-     * The returned rules are the committed ones: the new rules on success, the unchanged previous
-     * rules otherwise.
+     * Applies [op] on top of the committed rules and any queued edits, and syncs the result, all
+     * under the sync lock, so concurrent callers can never overwrite each other's changes. Queued
+     * edits are delivered first, preserving order. If delivery fails because the system hook is
+     * unreachable, [op] is queued for later ([SyncStatus.QUEUED]); any other failure leaves the
+     * queue untouched. The returned rules are always [effectiveRules] after the attempt.
      */
     fun updateRules(
         context: Context,
         changedPackages: List<String>,
-        transform: (HideRules) -> HideRules
+        op: PendingOp
     ): SyncResult = synchronized(uiSyncLock) {
-        val next = transform(rules)
-        val status = saveUiPrefsAndSyncLocked(
-            context, next.autoHide, next.autoHideClone, next.whitelist, next.blacklist, changedPackages
+        val queued = pendingOps
+        val all = PendingOps.enqueue(queued, op)
+            ?: return@synchronized SyncResult(SyncStatus.TOO_LARGE, effectiveRules())
+        val next = PendingOps.applyAll(rules, all)
+        val changed = (PendingOps.changedKeys(queued) + changedPackages).distinct()
+        var status = saveUiPrefsAndSyncLocked(
+            context, next.autoHide, next.autoHideClone, next.whitelist, next.blacklist, changed
         )
-        SyncResult(status, rules)
+        if (status == SyncStatus.OK) {
+            if (queued.isNotEmpty()) setPendingLocked(context, emptyList())
+        } else if (status == SyncStatus.FAILED) {
+            // Queue only when the hook is genuinely unreachable. A hook that answers the ping but
+            // rejected the update has a real error the user must see, so nothing is queued.
+            if (!pingSystemHook(context)) {
+                setPendingLocked(context, all)
+                status = SyncStatus.QUEUED
+            }
+        }
+        SyncResult(status, effectiveRules())
+    }
+
+    /**
+     * Edits made while the system hook was inactive, in the order the user made them. They are
+     * replayed on top of [rules] once the hook answers again. Only written under [uiSyncLock].
+     */
+    @Volatile
+    private var pendingOps: List<PendingOp> = emptyList()
+
+    /** The rules as the user sees them: committed rules plus queued edits not yet delivered. */
+    fun effectiveRules(): HideRules = PendingOps.applyAll(rules, pendingOps)
+
+    fun pendingCount(): Int = pendingOps.size
+
+    private fun setPendingLocked(context: Context, ops: List<PendingOp>) {
+        pendingOps = ops
+        val editor = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        if (ops.isEmpty()) {
+            editor.remove(PENDING_OPS_KEY)
+        } else {
+            editor.putString(PENDING_OPS_KEY, PendingOps.encode(ops))
+        }
+        editor.apply()
+    }
+
+    /**
+     * Replaces all rules (reset, import). Never queued: the user must see the result immediately.
+     * On success any queued edits are discarded, since the replacement supersedes them.
+     */
+    fun replaceRules(context: Context, changedPackages: List<String>, newRules: HideRules): SyncResult =
+        synchronized(uiSyncLock) {
+            val status = saveUiPrefsAndSyncLocked(
+                context, newRules.autoHide, newRules.autoHideClone, newRules.whitelist, newRules.blacklist,
+                changedPackages
+            )
+            if (status == SyncStatus.OK) setPendingLocked(context, emptyList())
+            SyncResult(status, effectiveRules())
+        }
+
+    /**
+     * Delivers queued edits in one update. OK clears the queue; TOO_LARGE also clears it because it
+     * can never succeed; FAILED keeps it for the next attempt. An empty queue returns OK.
+     */
+    fun flushPendingOps(context: Context, changedPackages: List<String>): SyncStatus = synchronized(uiSyncLock) {
+        val queued = pendingOps
+        if (queued.isEmpty()) return@synchronized SyncStatus.OK
+        val next = PendingOps.applyAll(rules, queued)
+        val changed = (PendingOps.changedKeys(queued) + changedPackages).distinct()
+        val status = saveUiPrefsAndSyncLocked(
+            context, next.autoHide, next.autoHideClone, next.whitelist, next.blacklist, changed
+        )
+        if (status != SyncStatus.FAILED) setPendingLocked(context, emptyList())
+        status
+    }
+
+    /** Drops all queued edits without delivering them. */
+    fun discardPendingOps(context: Context) = synchronized(uiSyncLock) {
+        setPendingLocked(context, emptyList())
     }
 
     /**
