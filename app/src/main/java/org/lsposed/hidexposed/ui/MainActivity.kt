@@ -2620,7 +2620,19 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
         }
         // Absence only proves removal when our own package inventory was actually retrieved.
         if (!ownInventoryOk) return false
-        return !installedPackagesSet.contains(pkg)
+        if (installedPackagesSet.contains(pkg)) return false
+        // The inventory was taken while the list was loading; a package installed since then would
+        // look missing. Re-check right before purging so the decision is always current.
+        val stillInstalled = try {
+            pm.getPackageInfo(pkg, 0)
+            true
+        } catch (_: PackageManager.NameNotFoundException) {
+            false
+        } catch (_: Throwable) {
+            // Unknown state: keep the rule rather than risk deleting it.
+            true
+        }
+        return !stillInstalled
     }
     // Re-reads the current rules under the shared sync lock, so a user edit made while the list
     // was loading is never overwritten by an outdated snapshot.
