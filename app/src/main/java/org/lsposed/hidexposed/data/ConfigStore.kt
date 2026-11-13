@@ -79,7 +79,7 @@ object ConfigStore {
      * `@Volatile` reference so Binder threads never observe a mix of old and new rules
      * (e.g. a new whitelist paired with a stale blacklist or auto-hide flag).
      */
-    private class HideRules(
+    data class HideRules(
         val autoHide: Boolean,
         val autoHideClone: Boolean,
         val whitelist: Set<String>,
@@ -339,15 +339,24 @@ object ConfigStore {
     // local commit of one caller can never interleave with another caller's.
     private val uiSyncLock = Any()
 
-    fun saveUiPrefsAndSync(
+    /** The rules last committed locally (after the system accepted them). */
+    fun currentRules(): HideRules = rules
+
+    /**
+     * Applies [transform] to the current rules and syncs the result, all under the sync lock, so
+     * concurrent callers can never overwrite each other's changes with an outdated snapshot.
+     * Returns the committed (normalized) rules, or null when the system rejected the update.
+     */
+    fun updateRules(
         context: Context,
-        autoHide: Boolean,
-        autoHideClone: Boolean = autoHideCloneModules,
-        whitelist: Set<String>,
-        blacklist: Set<String>,
-        changedPackages: List<String>
-    ): Boolean = synchronized(uiSyncLock) {
-        saveUiPrefsAndSyncLocked(context, autoHide, autoHideClone, whitelist, blacklist, changedPackages)
+        changedPackages: List<String>,
+        transform: (HideRules) -> HideRules
+    ): HideRules? = synchronized(uiSyncLock) {
+        val next = transform(rules)
+        val ok = saveUiPrefsAndSyncLocked(
+            context, next.autoHide, next.autoHideClone, next.whitelist, next.blacklist, changedPackages
+        )
+        if (ok) rules else null
     }
 
     /**
