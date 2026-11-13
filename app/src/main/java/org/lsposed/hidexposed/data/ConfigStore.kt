@@ -376,12 +376,12 @@ object ConfigStore {
             ?: return@synchronized SyncResult(SyncStatus.TOO_LARGE, effectiveRules())
         val next = PendingOps.applyAll(rules, all)
         val changed = (PendingOps.changedKeys(queued) + changedPackages).distinct()
+        // On success the delivered queue is cleared in the same SharedPreferences write as the rules.
         var status = saveUiPrefsAndSyncLocked(
-            context, next.autoHide, next.autoHideClone, next.whitelist, next.blacklist, changed
+            context, next.autoHide, next.autoHideClone, next.whitelist, next.blacklist, changed,
+            newPending = if (queued.isNotEmpty()) emptyList() else null
         )
-        if (status == SyncStatus.OK) {
-            if (queued.isNotEmpty()) setPendingLocked(context, emptyList())
-        } else if (status == SyncStatus.FAILED) {
+        if (status == SyncStatus.FAILED) {
             // Queue only when the hook is genuinely unreachable. A hook that answers the ping but
             // rejected the update has a real error the user must see, so nothing is queued.
             if (!pingSystemHook(context)) {
@@ -421,11 +421,12 @@ object ConfigStore {
      */
     fun replaceRules(context: Context, changedPackages: List<String>, newRules: HideRules): SyncResult =
         synchronized(uiSyncLock) {
+            // On success the superseded queue is cleared in the same SharedPreferences write.
             val status = saveUiPrefsAndSyncLocked(
                 context, newRules.autoHide, newRules.autoHideClone, newRules.whitelist, newRules.blacklist,
-                changedPackages
+                changedPackages,
+                newPending = emptyList()
             )
-            if (status == SyncStatus.OK) setPendingLocked(context, emptyList())
             SyncResult(status, effectiveRules())
         }
 
@@ -438,10 +439,13 @@ object ConfigStore {
         if (queued.isEmpty()) return@synchronized SyncStatus.OK
         val next = PendingOps.applyAll(rules, queued)
         val changed = (PendingOps.changedKeys(queued) + changedPackages).distinct()
+        // OK clears the queue in the same SharedPreferences write as the delivered rules.
         val status = saveUiPrefsAndSyncLocked(
-            context, next.autoHide, next.autoHideClone, next.whitelist, next.blacklist, changed
+            context, next.autoHide, next.autoHideClone, next.whitelist, next.blacklist, changed,
+            newPending = emptyList()
         )
-        if (status != SyncStatus.FAILED) setPendingLocked(context, emptyList())
+        // TOO_LARGE wrote no rules, so the hopeless queue is dropped on its own.
+        if (status == SyncStatus.TOO_LARGE) setPendingLocked(context, emptyList())
         status
     }
 
@@ -476,7 +480,8 @@ object ConfigStore {
         autoHideClone: Boolean,
         whitelist: Set<String>,
         blacklist: Set<String>,
-        changedPackages: List<String>
+        changedPackages: List<String>,
+        newPending: List<PendingOp>? = null
     ): SyncStatus {
         val isSelfBlacklisted = blacklist.contains(SELF_USER0_KEY) || blacklist.contains(SELF_PACKAGE)
         val safeWl = whitelist.toMutableSet()
@@ -527,13 +532,23 @@ object ConfigStore {
         // Commit locally only after system_server accepted and persisted the update. Otherwise the
         // UI reverts its on-screen state while local prefs would keep rules the system never applied.
         if (!synced) return SyncStatus.FAILED
-        rules = HideRules(autoHide, autoHideClone, finalWl, finalBl)
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        // Rules and the pending queue go into one editor/apply so a crash can never persist the new
+        // rules while keeping an already-delivered queue (which would be replayed a second time).
+        val editor = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
             .putBoolean("autoHide", autoHide)
             .putBoolean("autoHideClone", autoHideClone)
             .putStringSet("whitelist", finalWl)
             .putStringSet("blacklist", finalBl)
-            .apply()
+        if (newPending != null) {
+            if (newPending.isEmpty()) {
+                editor.remove(PENDING_OPS_KEY)
+            } else {
+                editor.putString(PENDING_OPS_KEY, PendingOps.encode(newPending))
+            }
+        }
+        editor.apply()
+        rules = HideRules(autoHide, autoHideClone, finalWl, finalBl)
+        if (newPending != null) pendingOps = newPending
         return SyncStatus.OK
     }
 
