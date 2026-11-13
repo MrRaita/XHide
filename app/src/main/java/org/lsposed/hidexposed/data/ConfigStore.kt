@@ -261,6 +261,10 @@ object ConfigStore {
     private fun saveToSystemFile(snapshot: HideRules): Boolean {
         return try {
             val bytes = rulesToJson(snapshot).toString().toByteArray(Charsets.UTF_8)
+            // loadFromSystemFile refuses files above this size, and the normalized snapshot can be
+            // larger than the accepted payload. Reject it here so an update that could not be
+            // reloaded after a restart is never reported as applied.
+            if (bytes.size > MAX_IPC_PAYLOAD_CHARS) return false
             DurableFiles.writeAtomically(systemConfigPath, bytes)
             true
         } catch (_: Throwable) {

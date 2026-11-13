@@ -118,6 +118,24 @@ class ConfigStoreCompatibilityTest {
     }
 
     @Test
+    fun snapshotLargerThanReloadLimitIsRejected() {
+        val before = JSONObject().apply {
+            put("blacklist", JSONArray(listOf("0:com.before")))
+        }.toString()
+        assertNotNull(ConfigStore.applySystemIpcUpdate(before))
+
+        // 484 distinct 200-char keys fit under the IPC limit, but the normalized snapshot (flags plus
+        // the self whitelist entry) exceeds it, so the file could not be reloaded after a restart.
+        val keys = (0 until 484).map { i -> "p$i".padEnd(200, 'a') }
+        val payload = JSONObject().apply { put("blacklist", JSONArray(keys)) }.toString()
+        assertTrue(payload.length <= 96 * 1024)
+        assertNull(ConfigStore.applySystemIpcUpdate(payload))
+
+        assertTrue(ConfigStore.shouldHidePackage("com.before", 0, false))
+        assertFalse(ConfigStore.shouldHidePackage(keys[0], 0, false))
+    }
+
+    @Test
     fun testValidKeyRegex() {
         assertTrue(ConfigStore.isValidConfigKey("0:org.lsposed.hidexposed"))
         assertTrue(ConfigStore.isValidConfigKey("10:com.discord"))
