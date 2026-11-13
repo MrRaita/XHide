@@ -147,6 +147,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import org.lsposed.hidexposed.BuildConfig
 import org.lsposed.hidexposed.core.AppDiagnostics
@@ -447,13 +449,20 @@ fun MainScreen(
      * cleanup cannot undo each other. The on-screen state is replaced by the committed result,
      * or by the unchanged committed rules when the system rejected the update.
      */
+    // Fair (FIFO) mutex taken on the main dispatcher in submission order, so edits commit in the
+    // order the user made them. ConfigStore's monitor lock gives no ordering guarantee between
+    // IO threads; it only coordinates with the stale-rule cleanup.
+    val syncMutex = remember { Mutex() }
+
     fun syncWithSystem(
         changedPkgs: List<String>,
         transform: (ConfigStore.HideRules) -> ConfigStore.HideRules
     ) {
         scope.launch {
-            val result = withContext(Dispatchers.IO) {
-                ConfigStore.updateRules(context, changedPkgs, transform)
+            val result = syncMutex.withLock {
+                withContext(Dispatchers.IO) {
+                    ConfigStore.updateRules(context, changedPkgs, transform)
+                }
             }
             showRules(result.rules)
             when (result.status) {
