@@ -429,6 +429,8 @@ fun MainScreen(
             bl.contains(uKey) || bl.contains(entry.packageName) -> true
             wl.contains(uKey) || wl.contains(entry.packageName) -> false
             !entry.isXposedModule -> false
+            // Mirrors ConfigStore: XHide is never auto-hidden, only hidden via an explicit blacklist entry.
+            uKey == ConfigStore.SELF_USER0_KEY -> false
             entry.userId == 0 -> autoHide
             else -> autoHide && autoHideClone
         }
@@ -563,7 +565,10 @@ fun MainScreen(
         newWl.remove(entry.packageName)
         newBl.remove(entry.packageName)
 
-        val defaultHidden = entry.isXposedModule &&
+        // ConfigStore force-whitelists XHide itself unless it is explicitly blacklisted, so auto-hide
+        // never applies to it. Treat it as visible-by-default so hiding writes a blacklist entry.
+        val isSelf = uKey == ConfigStore.SELF_USER0_KEY
+        val defaultHidden = !isSelf && entry.isXposedModule &&
             (if (entry.userId == 0) autoHideModules else (autoHideModules && autoHideCloneModules))
 
         if (hideInLauncher) {
@@ -2581,11 +2586,15 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
     // 2. Secondary discovery pass: Ensure 100% of installed Xposed modules are present in XHide,
     // even if they do not declare an android.intent.category.LAUNCHER activity or were
     // omitted from launcher queries after device reboot.
-    val installedApps = try {
-        pm.getInstalledApplications(PackageManager.GET_META_DATA)
+    // Null when the query failed. An empty list is also treated as a failure: every device has
+    // installed packages, so emptiness can only mean the inventory was not actually retrieved.
+    val installedAppsResult: List<ApplicationInfo>? = try {
+        pm.getInstalledApplications(PackageManager.GET_META_DATA).takeIf { it.isNotEmpty() }
     } catch (_: Throwable) {
-        emptyList()
+        null
     }
+    val ownInventoryOk = installedAppsResult != null
+    val installedApps = installedAppsResult ?: emptyList()
 
     for (appInfo in installedApps) {
         val pkg = appInfo.packageName ?: continue
@@ -2636,28 +2645,34 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
 
     // 3. Automatically purge stale/uninstalled packages from whitelist & blacklist
     // Prevents phantom ghost entries for packages that were uninstalled from the device.
-    val currentWl = ConfigStore.getWhitelist()
-    val currentBl = ConfigStore.getBlacklist()
-    val staleWl = currentWl.filter { key ->
-        val pkg = if (key.contains(":")) key.substringAfter(":") else key
-        !installedPackagesSet.contains(pkg)
+    // Without the system hook, other users' apps are invisible to us, so packages installed only
+    // in those users would look uninstalled and their rules would be wiped. Skip cleanup entirely.
+    val hookActive = try {
+        ConfigStore.pingSystemHook(context)
+    } catch (_: Throwable) {
+        false
     }
-    val staleBl = currentBl.filter { key ->
+    val ownUserId = getUserIdFromHandle(Process.myUserHandle(), userManager)
+    fun isStale(key: String): Boolean {
         val pkg = if (key.contains(":")) key.substringAfter(":") else key
-        !installedPackagesSet.contains(pkg)
+        val keyUserId = if (key.contains(":")) key.substringBefore(":").toIntOrNull() else null
+        if (keyUserId != null) {
+            if (keyUserId != ownUserId) {
+                // The companion app has no authoritative user list: a successful hook ping does not
+                // prove the profile-expansion hooks are installed, and a device with a work or clone
+                // profile already returns several profiles without them. A user missing from that
+                // list is therefore not proof of deletion, so rules for other users are kept.
+                return false
+            }
+        }
+        // Absence only proves removal when our own package inventory was actually retrieved.
+        if (!ownInventoryOk) return false
+        return !installedPackagesSet.contains(pkg)
     }
-
-    if (staleWl.isNotEmpty() || staleBl.isNotEmpty()) {
-        val cleanedWl = currentWl - staleWl.toSet()
-        val cleanedBl = currentBl - staleBl.toSet()
-        ConfigStore.saveUiPrefsAndSync(
-            context = context,
-            autoHide = ConfigStore.autoHideXposedModules,
-            autoHideClone = ConfigStore.autoHideCloneModules,
-            whitelist = cleanedWl,
-            blacklist = cleanedBl,
-            changedPackages = (staleWl + staleBl).distinct()
-        )
+    // Re-reads the current rules under the shared sync lock, so a user edit made while the list
+    // was loading is never overwritten by an outdated snapshot.
+    if (hookActive) {
+        ConfigStore.purgeStaleRules(context) { isStale(it) }
     }
 
     val collator = java.text.Collator.getInstance(java.util.Locale.getDefault()).apply {

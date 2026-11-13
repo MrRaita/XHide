@@ -30,9 +30,15 @@ If you want any detected module or manager icon to remain visible on your launch
 
 ---
 
+## Note on Icon Placement
+
+When an app is hidden, XHide tells launchers that the package was removed so they purge it from their caches immediately. When the app is unhidden, launchers treat it like a newly installed app. As a result, the icon does not return to its previous home screen, folder, or dock position; it appears in the app drawer or in the first free home screen slot, depending on your launcher settings.
+
+---
+
 ## Compatibility
 
-- **Android Versions:** Android 11 (API 30) through Android 17 (API 35–37+).
+- **Android Versions:** Android 11 (API 30) through Android 17 (API 37+).
 - **Frameworks:** LSPosed, Vector, and compatible ART hook runtimes.
 - **Scope:** Requires scoping to `System Framework` (`android`).
 

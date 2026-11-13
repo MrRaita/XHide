@@ -59,7 +59,12 @@ object ConfigStore {
     const val IPC_GET_ALL_USERS = "${IPC_PREFIX}all_users"
     const val IPC_UPDATE_PREFIX = "${IPC_PREFIX}update:"
 
-    private const val SYSTEM_CONFIG_PATH = "/data/system/hidexposed_config.json"
+    /**
+     * Location of the persisted system config. Only overridden by host-side unit tests, which
+     * have no `/data/system` and need writes to succeed or fail on demand.
+     */
+    @Volatile
+    internal var systemConfigPath: String = "/data/system/hidexposed_config.json"
     private const val PREFS_NAME = "hidexposed_prefs"
     private const val MAX_IPC_PAYLOAD_CHARS = 96 * 1024 // Safe 96 KB limit avoiding Binder TransactionTooLargeException
     private const val MAX_ENTRIES = 4096
@@ -69,13 +74,31 @@ object ConfigStore {
         return key.length <= 220 && VALID_KEY_REGEX.matches(key)
     }
 
-    @Volatile
-    var autoHideXposedModules: Boolean = true
-        private set
+    /**
+     * Immutable view of every value [shouldHidePackage] depends on. Published through a single
+     * `@Volatile` reference so Binder threads never observe a mix of old and new rules
+     * (e.g. a new whitelist paired with a stale blacklist or auto-hide flag).
+     */
+    private class HideRules(
+        val autoHide: Boolean,
+        val autoHideClone: Boolean,
+        val whitelist: Set<String>,
+        val blacklist: Set<String>
+    )
 
     @Volatile
-    var autoHideCloneModules: Boolean = true
-        private set
+    private var rules = HideRules(
+        autoHide = true,
+        autoHideClone = true,
+        whitelist = setOf(SELF_USER0_KEY),
+        blacklist = emptySet()
+    )
+
+    val autoHideXposedModules: Boolean
+        get() = rules.autoHide
+
+    val autoHideCloneModules: Boolean
+        get() = rules.autoHideClone
 
     // UI Preferences
     @Volatile
@@ -106,13 +129,6 @@ object ConfigStore {
     var appSortMode: AppSortMode = AppSortMode.NAME_ASC
         private set
 
-    // Lock-free, zero-race atomic set references for system_server Binder threads
-    @Volatile
-    private var whitelistedPackages: Set<String> = setOf(SELF_USER0_KEY)
-
-    @Volatile
-    private var blacklistedPackages: Set<String> = emptySet()
-
     @Volatile
     private var initializedInSystem = false
 
@@ -129,78 +145,91 @@ object ConfigStore {
 
     fun shouldHidePackage(packageName: String, userId: Int, isDetectedXposedModule: Boolean): Boolean {
         ensureSystemLoaded()
+        // Read the snapshot once so every check below sees the same rule set.
+        val r = rules
         val uKey = userKey(userId, packageName)
-        if (blacklistedPackages.contains(uKey)) {
+        if (r.blacklist.contains(uKey)) {
             return true
         }
-        if (whitelistedPackages.contains(uKey)) {
+        if (r.whitelist.contains(uKey)) {
             return false
         }
-        if (blacklistedPackages.contains(packageName)) {
+        if (r.blacklist.contains(packageName)) {
             return true
         }
-        if (whitelistedPackages.contains(packageName)) {
+        if (r.whitelist.contains(packageName)) {
             return false
         }
         if (!isDetectedXposedModule) {
             return false
         }
         return if (userId == 0) {
-            autoHideXposedModules
+            r.autoHide
         } else {
-            autoHideXposedModules && autoHideCloneModules
+            r.autoHide && r.autoHideClone
         }
     }
 
-    fun getWhitelist(): Set<String> = whitelistedPackages
-    fun getBlacklist(): Set<String> = blacklistedPackages
+    fun getWhitelist(): Set<String> = rules.whitelist
+    fun getBlacklist(): Set<String> = rules.blacklist
+
+    /**
+     * Parses a persisted or IPC config object into a [HideRules] snapshot, enforcing entry limits,
+     * key validation, and the "Hide XHide Icon" self-whitelist rule.
+     */
+    private fun parseRules(json: JSONObject): HideRules {
+        fun readKeys(name: String): MutableSet<String> {
+            val out = mutableSetOf<String>()
+            val arr = json.optJSONArray(name) ?: return out
+            val limit = minOf(arr.length(), MAX_ENTRIES)
+            for (i in 0 until limit) {
+                val pkg = arr.optString(i)
+                if (isValidConfigKey(pkg)) out.add(pkg)
+            }
+            return out
+        }
+        val newWhitelist = readKeys("whitelist")
+        val newBlacklist = readKeys("blacklist")
+
+        // Respect user choice: If explicitly blacklisted (via "Hide XHide Icon" setting), keep it blacklisted.
+        // Otherwise, default XHide to whitelist so autoHide doesn't accidentally hide it.
+        val isSelfBlacklisted = newBlacklist.contains(SELF_USER0_KEY) || newBlacklist.contains(SELF_PACKAGE)
+        if (!isSelfBlacklisted) {
+            newWhitelist.add(SELF_USER0_KEY)
+        } else {
+            newWhitelist.remove(SELF_USER0_KEY)
+            newWhitelist.remove(SELF_PACKAGE)
+        }
+
+        return HideRules(
+            autoHide = json.optBoolean("autoHide", true),
+            autoHideClone = json.optBoolean("autoHideClone", true),
+            whitelist = newWhitelist.toSet(),
+            blacklist = newBlacklist.toSet()
+        )
+    }
 
     /**
      * Parses an IPC update payload sent by the UI app to `system_server`.
-     * Returns the list of affected package names so `LauncherAppsImpl` can notify launchers across all users.
+     * Returns the list of affected package names so `LauncherAppsImpl` can notify launchers across all users,
+     * or null when the update was rejected (oversized or malformed payload, or the new rules could not be
+     * persisted). On null the previously published rules stay in effect.
      */
-    fun applySystemIpcUpdate(payload: String): List<String> {
-        if (payload.length > MAX_IPC_PAYLOAD_CHARS) return emptyList()
+    @Synchronized
+    fun applySystemIpcUpdate(payload: String): List<String>? {
+        if (payload.length > MAX_IPC_PAYLOAD_CHARS) return null
         return try {
             val json = JSONObject(payload)
-            autoHideXposedModules = json.optBoolean("autoHide", true)
-            autoHideCloneModules = json.optBoolean("autoHideClone", true)
+            val newRules = parseRules(json)
 
-            val newWhitelist = mutableSetOf<String>()
-            val wlArray = json.optJSONArray("whitelist")
-            if (wlArray != null) {
-                val limit = minOf(wlArray.length(), MAX_ENTRIES)
-                for (i in 0 until limit) {
-                    val pkg = wlArray.optString(i)
-                    if (isValidConfigKey(pkg)) newWhitelist.add(pkg)
-                }
-            }
-            val newBlacklist = mutableSetOf<String>()
-            val blArray = json.optJSONArray("blacklist")
-            if (blArray != null) {
-                val limit = minOf(blArray.length(), MAX_ENTRIES)
-                for (i in 0 until limit) {
-                    val pkg = blArray.optString(i)
-                    if (isValidConfigKey(pkg)) newBlacklist.add(pkg)
-                }
-            }
+            // Persist first and publish only on success, so memory, disk and the UI never diverge:
+            // an unpersisted update would otherwise be reported as applied and silently revert on
+            // the next system_server restart.
+            if (!saveToSystemFile(newRules)) return null
 
-            // Respect user choice: If explicitly blacklisted (via "Hide XHide Icon" setting), keep it blacklisted.
-            // Otherwise, default XHide to whitelist so autoHide doesn't accidentally hide it.
-            val isSelfBlacklisted = newBlacklist.contains(SELF_USER0_KEY) || newBlacklist.contains(SELF_PACKAGE)
-            if (!isSelfBlacklisted) {
-                newWhitelist.add(SELF_USER0_KEY)
-            } else {
-                newWhitelist.remove(SELF_USER0_KEY)
-                newWhitelist.remove(SELF_PACKAGE)
-            }
-
-            // Zero-race atomic reference swap: concurrent Binder threads never see an empty set
-            whitelistedPackages = newWhitelist.toSet()
-            blacklistedPackages = newBlacklist.toSet()
+            // Zero-race atomic reference swap: concurrent Binder threads never see a partial update
+            rules = newRules
             initializedInSystem = true
-
-            saveToSystemFile()
 
             val changed = mutableSetOf<String>()
             val changedArray = json.optJSONArray("changed")
@@ -215,75 +244,31 @@ object ConfigStore {
             }
             changed.toList()
         } catch (_: Throwable) {
-            emptyList()
+            null
         }
     }
 
     private fun loadFromSystemFile() {
         try {
-            val file = File(SYSTEM_CONFIG_PATH)
+            val file = File(systemConfigPath)
             if (!file.exists() || !file.canRead() || file.length() > MAX_IPC_PAYLOAD_CHARS) return
-            val json = JSONObject(file.readText())
-            autoHideXposedModules = json.optBoolean("autoHide", true)
-            autoHideCloneModules = json.optBoolean("autoHideClone", true)
-
-            val newWhitelist = mutableSetOf<String>()
-            val wlArray = json.optJSONArray("whitelist")
-            if (wlArray != null) {
-                val limit = minOf(wlArray.length(), MAX_ENTRIES)
-                for (i in 0 until limit) {
-                    val pkg = wlArray.optString(i)
-                    if (isValidConfigKey(pkg)) newWhitelist.add(pkg)
-                }
-            }
-            val newBlacklist = mutableSetOf<String>()
-            val blArray = json.optJSONArray("blacklist")
-            if (blArray != null) {
-                val limit = minOf(blArray.length(), MAX_ENTRIES)
-                for (i in 0 until limit) {
-                    val pkg = blArray.optString(i)
-                    if (isValidConfigKey(pkg)) newBlacklist.add(pkg)
-                }
-            }
-
-            val isSelfBlacklisted = newBlacklist.contains(SELF_USER0_KEY) || newBlacklist.contains(SELF_PACKAGE)
-            if (!isSelfBlacklisted) {
-                newWhitelist.add(SELF_USER0_KEY)
-            } else {
-                newWhitelist.remove(SELF_USER0_KEY)
-                newWhitelist.remove(SELF_PACKAGE)
-            }
-
-            whitelistedPackages = newWhitelist.toSet()
-            blacklistedPackages = newBlacklist.toSet()
+            rules = parseRules(JSONObject(file.readText()))
         } catch (_: Throwable) {
         }
     }
 
-    private fun saveToSystemFile() {
-        try {
-            val json = JSONObject().apply {
-                put("autoHide", autoHideXposedModules)
-                put("autoHideClone", autoHideCloneModules)
-                put("whitelist", JSONArray(whitelistedPackages.toList()))
-                put("blacklist", JSONArray(blacklistedPackages.toList()))
-            }
-            val targetFile = File(SYSTEM_CONFIG_PATH)
-            val tmpFile = File("$SYSTEM_CONFIG_PATH.tmp")
-            tmpFile.writeText(json.toString())
-            tmpFile.setReadable(false, false)
-            tmpFile.setReadable(true, true)
-            tmpFile.setWritable(false, false)
-            tmpFile.setWritable(true, true)
-            if (!tmpFile.renameTo(targetFile)) {
-                targetFile.writeText(json.toString())
-                targetFile.setReadable(false, false)
-                targetFile.setReadable(true, true)
-                targetFile.setWritable(false, false)
-                targetFile.setWritable(true, true)
-                tmpFile.delete()
-            }
+    /** Returns true only when the snapshot was durably written; the previous file is kept otherwise. */
+    private fun saveToSystemFile(snapshot: HideRules): Boolean {
+        return try {
+            val bytes = rulesToJson(snapshot).toString().toByteArray(Charsets.UTF_8)
+            // loadFromSystemFile refuses files above this size, and the normalized snapshot can be
+            // larger than the accepted payload. Reject it here so an update that could not be
+            // reloaded after a restart is never reported as applied.
+            if (bytes.size > MAX_IPC_PAYLOAD_CHARS) return false
+            DurableFiles.writeAtomically(systemConfigPath, bytes)
+            true
         } catch (_: Throwable) {
+            false
         }
     }
 
@@ -291,8 +276,6 @@ object ConfigStore {
 
     fun loadUiPrefs(context: Context) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        autoHideXposedModules = prefs.getBoolean("autoHide", true)
-        autoHideCloneModules = prefs.getBoolean("autoHideClone", true)
         appLanguage = prefs.getString("appLanguage", "SYSTEM") ?: "SYSTEM"
         themeMode = prefs.getString("themeMode", "SYSTEM") ?: "SYSTEM"
         amoledBlack = prefs.getBoolean("amoledBlack", true)
@@ -312,8 +295,12 @@ object ConfigStore {
             cleanWl.remove(SELF_USER0_KEY)
         }
 
-        whitelistedPackages = cleanWl.toSet()
-        blacklistedPackages = rawBl.toSet()
+        rules = HideRules(
+            autoHide = prefs.getBoolean("autoHide", true),
+            autoHideClone = prefs.getBoolean("autoHideClone", true),
+            whitelist = cleanWl.toSet(),
+            blacklist = rawBl.toSet()
+        )
     }
 
     fun saveUiAppearancePrefs(
@@ -348,6 +335,10 @@ object ConfigStore {
             .apply()
     }
 
+    // Serializes every UI-side sync (user edits and stale-rule cleanup) so the IPC step and the
+    // local commit of one caller can never interleave with another caller's.
+    private val uiSyncLock = Any()
+
     fun saveUiPrefsAndSync(
         context: Context,
         autoHide: Boolean,
@@ -355,10 +346,40 @@ object ConfigStore {
         whitelist: Set<String>,
         blacklist: Set<String>,
         changedPackages: List<String>
-    ): Boolean {
-        autoHideXposedModules = autoHide
-        autoHideCloneModules = autoHideClone
+    ): Boolean = synchronized(uiSyncLock) {
+        saveUiPrefsAndSyncLocked(context, autoHide, autoHideClone, whitelist, blacklist, changedPackages)
+    }
 
+    /**
+     * Removes stale whitelist/blacklist keys and syncs the result. The current rules are re-read
+     * under the sync lock, so a user edit committed while the app list was loading is never
+     * overwritten by an outdated snapshot. Returns true when nothing was stale or the sync succeeded.
+     */
+    fun purgeStaleRules(context: Context, isStale: (String) -> Boolean): Boolean = synchronized(uiSyncLock) {
+        val current = rules
+        val staleWl = current.whitelist.filter(isStale)
+        val staleBl = current.blacklist.filter(isStale)
+        if (staleWl.isEmpty()) {
+            if (staleBl.isEmpty()) return@synchronized true
+        }
+        saveUiPrefsAndSyncLocked(
+            context = context,
+            autoHide = current.autoHide,
+            autoHideClone = current.autoHideClone,
+            whitelist = current.whitelist - staleWl.toSet(),
+            blacklist = current.blacklist - staleBl.toSet(),
+            changedPackages = (staleWl + staleBl).distinct()
+        )
+    }
+
+    private fun saveUiPrefsAndSyncLocked(
+        context: Context,
+        autoHide: Boolean,
+        autoHideClone: Boolean,
+        whitelist: Set<String>,
+        blacklist: Set<String>,
+        changedPackages: List<String>
+    ): Boolean {
         val isSelfBlacklisted = blacklist.contains(SELF_USER0_KEY) || blacklist.contains(SELF_PACKAGE)
         val safeWl = whitelist.toMutableSet()
         val safeBl = blacklist.toMutableSet()
@@ -374,17 +395,8 @@ object ConfigStore {
 
         val finalWl = safeWl.toSet()
         val finalBl = safeBl.toSet()
-        whitelistedPackages = finalWl
-        blacklistedPackages = finalBl
 
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-            .putBoolean("autoHide", autoHide)
-            .putBoolean("autoHideClone", autoHideClone)
-            .putStringSet("whitelist", finalWl)
-            .putStringSet("blacklist", finalBl)
-            .apply()
-
-        return try {
+        val synced = try {
             val cleanChanged = changedPackages.filter { isValidConfigKey(it) }.distinct()
 
             val payload = JSONObject().apply {
@@ -395,21 +407,36 @@ object ConfigStore {
                 put("changed", JSONArray(cleanChanged))
             }.toString()
 
-            val launcherApps = context.getSystemService(LauncherApps::class.java) ?: return false
-            val res = launcherApps.getActivityList("$IPC_UPDATE_PREFIX$payload", Process.myUserHandle())
+            val launcherApps = context.getSystemService(LauncherApps::class.java)
+            val res = launcherApps?.getActivityList("$IPC_UPDATE_PREFIX$payload", Process.myUserHandle())
             res != null && res.isNotEmpty()
         } catch (_: Throwable) {
             false
         }
+
+        // Commit locally only after system_server accepted and persisted the update. Otherwise the
+        // UI reverts its on-screen state while local prefs would keep rules the system never applied.
+        if (synced) {
+            rules = HideRules(autoHide, autoHideClone, finalWl, finalBl)
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                .putBoolean("autoHide", autoHide)
+                .putBoolean("autoHideClone", autoHideClone)
+                .putStringSet("whitelist", finalWl)
+                .putStringSet("blacklist", finalBl)
+                .apply()
+        }
+        return synced
     }
 
     fun exportConfigJson(): String {
-        return JSONObject().apply {
-            put("autoHide", autoHideXposedModules)
-            put("autoHideClone", autoHideCloneModules)
-            put("whitelist", JSONArray(whitelistedPackages.toList()))
-            put("blacklist", JSONArray(blacklistedPackages.toList()))
-        }.toString(2)
+        return rulesToJson(rules).toString(2)
+    }
+
+    private fun rulesToJson(snapshot: HideRules): JSONObject = JSONObject().apply {
+        put("autoHide", snapshot.autoHide)
+        put("autoHideClone", snapshot.autoHideClone)
+        put("whitelist", JSONArray(snapshot.whitelist.toList()))
+        put("blacklist", JSONArray(snapshot.blacklist.toList()))
     }
 
     fun pingSystemHook(context: Context): Boolean {

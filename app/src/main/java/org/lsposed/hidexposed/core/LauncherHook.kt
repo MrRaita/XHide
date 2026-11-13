@@ -49,9 +49,17 @@ object LauncherHook {
     private const val USER_MANAGER_SERVICE_CLASS = "com.android.server.pm.UserManagerService"
     private const val EXTRA_ALL_USERS_QUERY = "hidexposed_all_users_query"
     private const val PER_USER_RANGE = 100000
+    // Not a valid package name, so a launcher-activity query for it always returns an empty list.
+    private const val IPC_REJECTED_PACKAGE = "__hidexposed_ipc_rejected__"
 
     @Volatile
     private var cachedSelfAppId: Int = -1
+
+    // Incremented (under selfCacheLock) on every companion package lifecycle event. An in-flight
+    // isCallerSelf lookup only publishes its appId if no event happened since it started, so a
+    // removal racing with verification cannot re-publish a stale appId.
+    private val selfCacheLock = Any()
+    private var selfCacheGeneration = 0L
 
     fun install(classLoader: ClassLoader) {
         try {
@@ -310,8 +318,15 @@ object LauncherHook {
                                 targetPackage.startsWith(ConfigStore.IPC_UPDATE_PREFIX) -> {
                                     val payload = targetPackage.removePrefix(ConfigStore.IPC_UPDATE_PREFIX)
                                     val changedPackages = ConfigStore.applySystemIpcUpdate(payload)
-                                    notifyLaunchersOfChanges(param.thisObject, changedPackages, userHandle)
-                                    param.args[1] = ConfigStore.SELF_PACKAGE
+                                    if (changedPackages == null) {
+                                        // Rejected or not persisted: query a package that cannot exist so
+                                        // the UI receives an empty list, reports failure and reverts.
+                                        param.args[1] = IPC_REJECTED_PACKAGE
+                                        XposedBridge.log("[$TAG] IPC config update rejected (invalid payload or persistence failure)")
+                                    } else {
+                                        notifyLaunchersOfChanges(param.thisObject, changedPackages, userHandle)
+                                        param.args[1] = ConfigStore.SELF_PACKAGE
+                                    }
                                 }
                             }
                         }
@@ -322,7 +337,6 @@ object LauncherHook {
 
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
-                        val callingPackage = param.args[0] as? String ?: return
                         val targetPackage = param.args[1] as? String
                         val userHandle = param.args[2] as? UserHandle
                         val userId = getUserId(userHandle)
@@ -409,7 +423,6 @@ object LauncherHook {
             override fun afterHookedMethod(param: MethodHookParam) {
                 try {
                     if (param.result == null) return
-                    val callingPackage = param.args[0] as? String ?: return
                     val callingUid = Binder.getCallingUid()
                     if (isExemptCaller(callingUid, param.thisObject)) return
 
@@ -472,7 +485,6 @@ object LauncherHook {
                     override fun afterHookedMethod(param: MethodHookParam) {
                         try {
                             if (param.result != true) return
-                            val callingPackage = param.args[0] as? String ?: return
                             val callingUid = Binder.getCallingUid()
                             if (isExemptCaller(callingUid, param.thisObject)) return
 
@@ -510,7 +522,6 @@ object LauncherHook {
                     override fun afterHookedMethod(param: MethodHookParam) {
                         try {
                             if (param.result != true) return
-                            val callingPackage = param.args[0] as? String ?: return
                             val callingUid = Binder.getCallingUid()
                             if (isExemptCaller(callingUid, param.thisObject)) return
 
@@ -542,7 +553,6 @@ object LauncherHook {
             override fun afterHookedMethod(param: MethodHookParam) {
                 try {
                     if (param.result == null) return
-                    val callingPackage = param.args[0] as? String ?: return
                     val callingUid = Binder.getCallingUid()
                     if (isExemptCaller(callingUid, param.thisObject)) return
 
@@ -636,7 +646,6 @@ object LauncherHook {
                     override fun afterHookedMethod(param: MethodHookParam) {
                         try {
                             if (param.result == null) return
-                            val callingPackage = param.args[0] as? String ?: return
                             val callingUid = Binder.getCallingUid()
                             if (isExemptCaller(callingUid, param.thisObject)) return
 
@@ -669,7 +678,6 @@ object LauncherHook {
             override fun afterHookedMethod(param: MethodHookParam) {
                 try {
                     val slice = param.result ?: return
-                    val callingPackage = param.args[0] as? String ?: return
                     val callingUid = Binder.getCallingUid()
                     if (isExemptCaller(callingUid, param.thisObject)) return
 
@@ -801,6 +809,11 @@ object LauncherHook {
         val context = getContextFromImpl(serviceObject) ?: return false
         val token = Binder.clearCallingIdentity()
         return try {
+            // Lock-free snapshot before any lookup. Launcher queries hit this path on every call
+            // until the appId is cached, so it must never block on watcher registration.
+            val watcherReadyAtStart = selfWatcherAllUsers
+            val generationAtStart = synchronized(selfCacheLock) { selfCacheGeneration }
+
             val pm = context.packageManager
             val pkgs = pm.getPackagesForUid(callingUid)
             val isSelf = pkgs?.contains(ConfigStore.SELF_PACKAGE) == true
@@ -810,13 +823,109 @@ object LauncherHook {
                 return false
             }
 
-            cachedSelfAppId = appId
+            // Registration runs off the Binder thread; until it completes, caching stays disabled
+            // and every call goes through full verification.
+            if (!watcherReadyAtStart) scheduleSelfPackageWatcher(context)
+
+            // Only cache once we can guarantee invalidation on uninstall/replace, and only if no
+            // lifecycle event happened mid-verification; otherwise a reassigned appId would
+            // inherit IPC and cross-profile privileges.
+            if (watcherReadyAtStart) {
+                synchronized(selfCacheLock) {
+                    if (selfCacheGeneration == generationAtStart) {
+                        cachedSelfAppId = appId
+                    }
+                }
+            }
             true
         } catch (_: Throwable) {
             false
         } finally {
             Binder.restoreCallingIdentity(token)
         }
+    }
+
+    @Volatile
+    private var selfWatcherRegistered = false
+
+    private val selfWatcherScheduled = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Registers the package watcher on a background thread, at most once at a time. */
+    private fun scheduleSelfPackageWatcher(context: Context) {
+        if (selfWatcherRegistered) return
+        if (!selfWatcherScheduled.compareAndSet(false, true)) return
+        try {
+            Thread({
+                val token = Binder.clearCallingIdentity()
+                try {
+                    ensureSelfPackageWatcher(context)
+                } catch (t: Throwable) {
+                    XposedBridge.log("[$TAG] Self package watcher registration failed: ${t.message}")
+                } finally {
+                    Binder.restoreCallingIdentity(token)
+                    // Allow a retry later if registration did not happen.
+                    if (!selfWatcherRegistered) selfWatcherScheduled.set(false)
+                }
+            }, "XHide-SelfWatcher").apply {
+                isDaemon = true
+                start()
+            }
+        } catch (t: Throwable) {
+            selfWatcherScheduled.set(false)
+            XposedBridge.log("[$TAG] Could not start self watcher thread: ${t.message}")
+        }
+    }
+
+    // True only when the watcher covers every user. A user-scoped fallback receiver cannot
+    // guarantee invalidation when the companion is removed from another user.
+    @Volatile
+    private var selfWatcherAllUsers = false
+
+    /**
+     * Registers a one-time receiver in `system_server` that drops [cachedSelfAppId] whenever the
+     * companion package is removed, replaced, or re-added in any user, forcing re-verification.
+     * Must be called with cleared calling identity. Returns true only when the watcher covers all
+     * users, i.e. when it is safe to cache the self-caller appId.
+     */
+    @Synchronized
+    private fun ensureSelfPackageWatcher(context: Context): Boolean {
+        if (selfWatcherRegistered) return selfWatcherAllUsers
+        val filter = android.content.IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_REMOVED)
+            addAction(Intent.ACTION_PACKAGE_FULLY_REMOVED)
+            addAction(Intent.ACTION_PACKAGE_REPLACED)
+            addAction(Intent.ACTION_PACKAGE_ADDED)
+            addDataScheme("package")
+            addDataSchemeSpecificPart(ConfigStore.SELF_PACKAGE, android.os.PatternMatcher.PATTERN_LITERAL)
+        }
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                if (intent?.data?.schemeSpecificPart != ConfigStore.SELF_PACKAGE) return
+                synchronized(selfCacheLock) {
+                    selfCacheGeneration++
+                    cachedSelfAppId = -1
+                }
+                XposedBridge.log("[$TAG] Companion package changed (${intent.action}); self-caller cache invalidated")
+            }
+        }
+        selfWatcherRegistered = try {
+            val allUsers = XposedHelpers.getStaticObjectField(UserHandle::class.java, "ALL") as UserHandle
+            XposedHelpers.callMethod(context, "registerReceiverAsUser", receiver, allUsers, filter, null, null)
+            selfWatcherAllUsers = true
+            true
+        } catch (t: Throwable) {
+            XposedBridge.log("[$TAG] registerReceiverAsUser failed, falling back: ${t.message}")
+            try {
+                // User-scoped only: still useful for invalidation, but not sufficient to cache.
+                context.registerReceiver(receiver, filter)
+                XposedBridge.log("[$TAG] Self package watcher is user-scoped; self-caller appId will not be cached")
+                true
+            } catch (t2: Throwable) {
+                XposedBridge.log("[$TAG] Could not register self package watcher: ${t2.message}")
+                false
+            }
+        }
+        return selfWatcherAllUsers
     }
 
     private fun verifyCallerSignature(pm: PackageManager): Boolean {
@@ -904,14 +1013,7 @@ object LauncherHook {
         return emptyList<Any>()
     }
 
-    private fun getUserId(userHandle: UserHandle?): Int {
-        if (userHandle == null) return 0
-        return try {
-            XposedHelpers.callMethod(userHandle, "getIdentifier") as Int
-        } catch (_: Throwable) {
-            userHandle.hashCode()
-        }
-    }
+    private fun getUserId(userHandle: UserHandle?): Int = userIdOf(userHandle)
 
     /**
      * Supports:

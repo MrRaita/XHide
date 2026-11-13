@@ -4,10 +4,16 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Binder
+import android.os.Process
 import android.os.UserHandle
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
-import java.util.concurrent.ConcurrentHashMap
+import org.lsposed.hidexposed.data.DurableFiles
+import java.io.File
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Universal O(1) Xposed Module Detector.
@@ -25,7 +31,84 @@ object ModuleCache {
     private const val TAG = "XHide"
 
     // Key: "packageName|sourceDir" -> Value: true if Xposed module, false otherwise
-    private val apkModuleCache = ConcurrentHashMap<String, Boolean>()
+    private const val MAX_CACHE_ENTRIES = 2048
+
+    // Bounded access-ordered LRU: evicts only the least recently used entry instead of
+    // wiping the whole cache (which forced ZIP re-scans of every package on Binder threads).
+    private val apkModuleCache: MutableMap<String, Boolean> = java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<String, Boolean>(256, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?): Boolean =
+                size > MAX_CACHE_ENTRIES
+        }
+    )
+
+    // Verdicts are persisted to disk so each boot does not re-open every APK on Binder threads.
+    // Writes are debounced so the burst of first-boot detections lands in a single file write.
+    private const val PERSIST_DELAY_MS = 5_000L
+
+    @Volatile
+    private var persistedLoaded = false
+    private val persistLock = Any()
+    private val persistScheduled = AtomicBoolean(false)
+    private val persistExecutor: ScheduledExecutorService by lazy {
+        Executors.newSingleThreadScheduledExecutor { r ->
+            Thread(r, "XHide-ModuleCache").apply {
+                isDaemon = true
+                priority = Thread.MIN_PRIORITY
+            }
+        }
+    }
+
+    private fun isSystemServer(): Boolean = Process.myUid() == Process.SYSTEM_UID
+
+    private fun ensurePersistedLoaded() {
+        if (persistedLoaded) return
+        synchronized(persistLock) {
+            if (persistedLoaded) return
+            try {
+                if (!isSystemServer()) return
+                val file = File(ModuleCacheFile.PATH)
+                if (!file.isFile) return
+                if (file.length() > ModuleCacheFile.MAX_FILE_BYTES) return
+                val loaded = ModuleCacheFile.decode(file.readText(), ModuleCacheFile.DETECTION_RULES_VERSION, MAX_CACHE_ENTRIES)
+                for ((key, isModule) in loaded) {
+                    apkModuleCache.putIfAbsent(key, isModule)
+                }
+                XposedBridge.log("[$TAG] Loaded ${loaded.size} persisted module verdicts")
+            } catch (t: Throwable) {
+                XposedBridge.log("[$TAG] Could not load module cache: ${t.message}")
+            } finally {
+                persistedLoaded = true
+            }
+        }
+    }
+
+    private fun schedulePersist() {
+        if (!isSystemServer()) return
+        if (!persistScheduled.compareAndSet(false, true)) return
+        try {
+            persistExecutor.schedule({
+                persistScheduled.set(false)
+                persistNow()
+            }, PERSIST_DELAY_MS, TimeUnit.MILLISECONDS)
+        } catch (t: Throwable) {
+            persistScheduled.set(false)
+            XposedBridge.log("[$TAG] Could not schedule module cache write: ${t.message}")
+        }
+    }
+
+    private fun persistNow() {
+        try {
+            val snapshot = synchronized(apkModuleCache) { LinkedHashMap(apkModuleCache) }
+            // Drop verdicts for APKs that no longer exist (uninstalled or replaced packages).
+            val live = snapshot.filterKeys { File(ModuleCacheFile.sourceDirOf(it)).exists() }
+            val bytes = ModuleCacheFile.encode(live, ModuleCacheFile.DETECTION_RULES_VERSION).toByteArray(Charsets.UTF_8)
+            if (bytes.size > ModuleCacheFile.MAX_FILE_BYTES) return
+            DurableFiles.writeAtomically(ModuleCacheFile.PATH, bytes)
+        } catch (t: Throwable) {
+            XposedBridge.log("[$TAG] Could not persist module cache: ${t.message}")
+        }
+    }
 
     fun isXposedModule(
         packageName: String,
@@ -50,14 +133,14 @@ object ModuleCache {
         }
 
         val cacheKey = "$packageName|$sourceDir"
+        ensurePersistedLoaded()
         apkModuleCache[cacheKey]?.let { return it }
 
-        if (apkModuleCache.size > 2048) {
-            apkModuleCache.clear()
-        }
-
-        val detected = detectModuleFromAppInfo(packageName, resolvedAppInfo, context, userHandle)
+        // A failed APK read is not a verdict: return the safe default without caching it, so a
+        // transient I/O error cannot persist a module as "not a module" across boots.
+        val detected = scanModule(packageName, resolvedAppInfo, context, userHandle) ?: return false
         apkModuleCache[cacheKey] = detected
+        schedulePersist()
         if (detected) {
             XposedBridge.log("[$TAG] Detected Xposed module: $packageName ($sourceDir)")
         }
@@ -75,7 +158,7 @@ object ModuleCache {
             val pm = context.packageManager
             if (userHandle != null) {
                 try {
-                    val userId = XposedHelpers.callMethod(userHandle, "getIdentifier") as? Int ?: userHandle.hashCode()
+                    val userId = userIdOf(userHandle)
                     val info = XposedHelpers.callMethod(
                         pm,
                         "getApplicationInfoAsUser",
@@ -103,10 +186,32 @@ object ModuleCache {
         appInfo: ApplicationInfo,
         context: Context?,
         userHandle: UserHandle?
-    ): Boolean {
+    ): Boolean = scanModule(packageName, appInfo, context, userHandle) ?: false
+
+    /**
+     * Returns true/false for a definitive verdict, or null when the APK could not be read
+     * (transient I/O error, file replaced mid-scan). Null results must not be cached.
+     */
+    private fun scanModule(
+        packageName: String,
+        appInfo: ApplicationInfo,
+        context: Context?,
+        userHandle: UserHandle?
+    ): Boolean? {
         // 1. Fast manifest meta-data check (Classic Xposed & Modern LibXposed)
+        // Hook-provided ApplicationInfo often lacks metaData. If the GET_META_DATA re-query also
+        // fails, absence of metadata is unknown rather than proven, so a negative verdict from the
+        // archive check alone must not be persisted.
+        var metadataChecked = false
         try {
-            val meta = appInfo.metaData ?: resolveAppInfoSafely(packageName, context, userHandle)?.metaData
+            val meta = if (appInfo.metaData != null) {
+                metadataChecked = true
+                appInfo.metaData
+            } else {
+                val resolved = resolveAppInfoSafely(packageName, context, userHandle)
+                if (resolved != null) metadataChecked = true
+                resolved?.metaData
+            }
             if (meta != null) {
                 if (meta.containsKey("xposedmodule") ||
                     meta.containsKey("xposedminversion") ||
@@ -135,9 +240,14 @@ object ModuleCache {
                     }
                 }
             } catch (_: Throwable) {
+                // Unreadable APK: report "unknown" so the caller does not cache a false negative.
+                return null
             }
         }
 
+        // No archive markers, but metadata could not be inspected: report "unknown" so the
+        // caller does not cache or persist a possibly false negative.
+        if (!metadataChecked) return null
         return false
     }
 
