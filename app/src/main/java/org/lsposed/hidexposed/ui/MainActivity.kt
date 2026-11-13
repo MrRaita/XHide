@@ -454,17 +454,26 @@ fun MainScreen(
     // IO threads; it only coordinates with the stale-rule cleanup.
     val syncMutex = remember { Mutex() }
 
+    // Number of submitted edits not yet finished. Only touched on the main dispatcher. While edits
+    // are pending, the on-screen state holds their optimistic values and must not be replaced.
+    var pendingSyncs by remember { mutableStateOf(0) }
+
     fun syncWithSystem(
         changedPkgs: List<String>,
         transform: (ConfigStore.HideRules) -> ConfigStore.HideRules
     ) {
+        pendingSyncs++
         scope.launch {
             val result = syncMutex.withLock {
                 withContext(Dispatchers.IO) {
                     ConfigStore.updateRules(context, changedPkgs, transform)
                 }
             }
-            showRules(result.rules)
+            pendingSyncs--
+            // result.rules is the snapshot taken inside the lock; a later cleanup commit may already
+            // have superseded it. Show the latest committed rules, and only once no edit is pending
+            // so a queued edit's optimistic state does not flicker back.
+            if (pendingSyncs == 0) showRules(ConfigStore.currentRules())
             when (result.status) {
                 ConfigStore.SyncStatus.OK -> Unit
                 ConfigStore.SyncStatus.TOO_LARGE ->
@@ -493,8 +502,9 @@ fun MainScreen(
                 }
                 isHookActive = active
                 apps = loadedApps
-                // The app list loader may have purged stale rules; show what is actually committed.
-                showRules(ConfigStore.currentRules())
+                // The app list loader may have purged stale rules; show what is actually committed,
+                // unless an edit is still pending (it refreshes the state itself when it finishes).
+                if (pendingSyncs == 0) showRules(ConfigStore.currentRules())
                 defaultLauncher = launcher
 
                 val userManager = context.getSystemService(UserManager::class.java)
