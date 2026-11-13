@@ -335,10 +335,47 @@ object ConfigStore {
             .apply()
     }
 
+    // Serializes every UI-side sync (user edits and stale-rule cleanup) so the IPC step and the
+    // local commit of one caller can never interleave with another caller's.
+    private val uiSyncLock = Any()
+
     fun saveUiPrefsAndSync(
         context: Context,
         autoHide: Boolean,
         autoHideClone: Boolean = autoHideCloneModules,
+        whitelist: Set<String>,
+        blacklist: Set<String>,
+        changedPackages: List<String>
+    ): Boolean = synchronized(uiSyncLock) {
+        saveUiPrefsAndSyncLocked(context, autoHide, autoHideClone, whitelist, blacklist, changedPackages)
+    }
+
+    /**
+     * Removes stale whitelist/blacklist keys and syncs the result. The current rules are re-read
+     * under the sync lock, so a user edit committed while the app list was loading is never
+     * overwritten by an outdated snapshot. Returns true when nothing was stale or the sync succeeded.
+     */
+    fun purgeStaleRules(context: Context, isStale: (String) -> Boolean): Boolean = synchronized(uiSyncLock) {
+        val current = rules
+        val staleWl = current.whitelist.filter(isStale)
+        val staleBl = current.blacklist.filter(isStale)
+        if (staleWl.isEmpty()) {
+            if (staleBl.isEmpty()) return@synchronized true
+        }
+        saveUiPrefsAndSyncLocked(
+            context = context,
+            autoHide = current.autoHide,
+            autoHideClone = current.autoHideClone,
+            whitelist = current.whitelist - staleWl.toSet(),
+            blacklist = current.blacklist - staleBl.toSet(),
+            changedPackages = (staleWl + staleBl).distinct()
+        )
+    }
+
+    private fun saveUiPrefsAndSyncLocked(
+        context: Context,
+        autoHide: Boolean,
+        autoHideClone: Boolean,
         whitelist: Set<String>,
         blacklist: Set<String>,
         changedPackages: List<String>

@@ -2645,8 +2645,6 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
 
     // 3. Automatically purge stale/uninstalled packages from whitelist & blacklist
     // Prevents phantom ghost entries for packages that were uninstalled from the device.
-    val currentWl = ConfigStore.getWhitelist()
-    val currentBl = ConfigStore.getBlacklist()
     // Without the system hook, other users' apps are invisible to us, so packages installed only
     // in those users would look uninstalled and their rules would be wiped. Skip cleanup entirely.
     val hookActive = try {
@@ -2671,20 +2669,10 @@ private fun loadInstalledAppsAcrossProfiles(context: Context): List<AppEntry> {
         if (!ownInventoryOk) return false
         return !installedPackagesSet.contains(pkg)
     }
-    val staleWl = if (hookActive) currentWl.filter { isStale(it) } else emptyList()
-    val staleBl = if (hookActive) currentBl.filter { isStale(it) } else emptyList()
-
-    if (staleWl.isNotEmpty() || staleBl.isNotEmpty()) {
-        val cleanedWl = currentWl - staleWl.toSet()
-        val cleanedBl = currentBl - staleBl.toSet()
-        ConfigStore.saveUiPrefsAndSync(
-            context = context,
-            autoHide = ConfigStore.autoHideXposedModules,
-            autoHideClone = ConfigStore.autoHideCloneModules,
-            whitelist = cleanedWl,
-            blacklist = cleanedBl,
-            changedPackages = (staleWl + staleBl).distinct()
-        )
+    // Re-reads the current rules under the shared sync lock, so a user edit made while the list
+    // was loading is never overwritten by an outdated snapshot.
+    if (hookActive) {
+        ConfigStore.purgeStaleRules(context) { isStale(it) }
     }
 
     val collator = java.text.Collator.getInstance(java.util.Locale.getDefault()).apply {
