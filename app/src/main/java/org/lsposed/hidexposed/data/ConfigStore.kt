@@ -79,7 +79,7 @@ object ConfigStore {
      * `@Volatile` reference so Binder threads never observe a mix of old and new rules
      * (e.g. a new whitelist paired with a stale blacklist or auto-hide flag).
      */
-    private class HideRules(
+    data class HideRules(
         val autoHide: Boolean,
         val autoHideClone: Boolean,
         val whitelist: Set<String>,
@@ -177,14 +177,24 @@ object ConfigStore {
      * Parses a persisted or IPC config object into a [HideRules] snapshot, enforcing entry limits,
      * key validation, and the "Hide XHide Icon" self-whitelist rule.
      */
-    private fun parseRules(json: JSONObject): HideRules {
+    private fun parseRules(json: JSONObject, strict: Boolean = false): HideRules {
+        // strict (IPC updates): reject instead of truncating or dropping entries, otherwise the UI
+        // would commit the full list while system_server applies a reduced one and the two diverge.
+        // Lenient (persisted file): keep whatever is valid rather than losing every rule.
         fun readKeys(name: String): MutableSet<String> {
             val out = mutableSetOf<String>()
             val arr = json.optJSONArray(name) ?: return out
+            if (strict) {
+                if (arr.length() > MAX_ENTRIES) throw IllegalArgumentException("Too many $name entries")
+            }
             val limit = minOf(arr.length(), MAX_ENTRIES)
             for (i in 0 until limit) {
                 val pkg = arr.optString(i)
-                if (isValidConfigKey(pkg)) out.add(pkg)
+                if (isValidConfigKey(pkg)) {
+                    out.add(pkg)
+                } else if (strict) {
+                    throw IllegalArgumentException("Invalid $name entry")
+                }
             }
             return out
         }
@@ -220,7 +230,7 @@ object ConfigStore {
         if (payload.length > MAX_IPC_PAYLOAD_CHARS) return null
         return try {
             val json = JSONObject(payload)
-            val newRules = parseRules(json)
+            val newRules = parseRules(json, strict = true)
 
             // Persist first and publish only on success, so memory, disk and the UI never diverge:
             // an unpersisted update would otherwise be reported as applied and silently revert on
@@ -339,29 +349,42 @@ object ConfigStore {
     // local commit of one caller can never interleave with another caller's.
     private val uiSyncLock = Any()
 
-    fun saveUiPrefsAndSync(
+    /** The rules last committed locally (after the system accepted them). */
+    fun currentRules(): HideRules = rules
+
+    enum class SyncStatus { OK, TOO_LARGE, FAILED }
+
+    /** Outcome of a UI-side sync; [rules] is always the currently committed rule set. */
+    class SyncResult(val status: SyncStatus, val rules: HideRules)
+
+    /**
+     * Applies [transform] to the current rules and syncs the result, all under the sync lock, so
+     * concurrent callers can never overwrite each other's changes with an outdated snapshot.
+     * The returned rules are the committed ones: the new rules on success, the unchanged previous
+     * rules otherwise.
+     */
+    fun updateRules(
         context: Context,
-        autoHide: Boolean,
-        autoHideClone: Boolean = autoHideCloneModules,
-        whitelist: Set<String>,
-        blacklist: Set<String>,
-        changedPackages: List<String>
-    ): Boolean = synchronized(uiSyncLock) {
-        saveUiPrefsAndSyncLocked(context, autoHide, autoHideClone, whitelist, blacklist, changedPackages)
+        changedPackages: List<String>,
+        transform: (HideRules) -> HideRules
+    ): SyncResult = synchronized(uiSyncLock) {
+        val next = transform(rules)
+        val status = saveUiPrefsAndSyncLocked(
+            context, next.autoHide, next.autoHideClone, next.whitelist, next.blacklist, changedPackages
+        )
+        SyncResult(status, rules)
     }
 
     /**
      * Removes stale whitelist/blacklist keys and syncs the result. The current rules are re-read
      * under the sync lock, so a user edit committed while the app list was loading is never
-     * overwritten by an outdated snapshot. Returns true when nothing was stale or the sync succeeded.
+     * overwritten by an outdated snapshot. Returns OK when nothing was stale or the sync succeeded.
      */
-    fun purgeStaleRules(context: Context, isStale: (String) -> Boolean): Boolean = synchronized(uiSyncLock) {
+    fun purgeStaleRules(context: Context, isStale: (String) -> Boolean): SyncStatus = synchronized(uiSyncLock) {
         val current = rules
         val staleWl = current.whitelist.filter(isStale)
         val staleBl = current.blacklist.filter(isStale)
-        if (staleWl.isEmpty()) {
-            if (staleBl.isEmpty()) return@synchronized true
-        }
+        if (staleWl.isEmpty() and staleBl.isEmpty()) return@synchronized SyncStatus.OK
         saveUiPrefsAndSyncLocked(
             context = context,
             autoHide = current.autoHide,
@@ -379,7 +402,7 @@ object ConfigStore {
         whitelist: Set<String>,
         blacklist: Set<String>,
         changedPackages: List<String>
-    ): Boolean {
+    ): SyncStatus {
         val isSelfBlacklisted = blacklist.contains(SELF_USER0_KEY) || blacklist.contains(SELF_PACKAGE)
         val safeWl = whitelist.toMutableSet()
         val safeBl = blacklist.toMutableSet()
@@ -396,36 +419,47 @@ object ConfigStore {
         val finalWl = safeWl.toSet()
         val finalBl = safeBl.toSet()
 
-        val synced = try {
-            val cleanChanged = changedPackages.filter { isValidConfigKey(it) }.distinct()
-
-            val payload = JSONObject().apply {
+        val payload = try {
+            JSONObject().apply {
                 put("autoHide", autoHide)
                 put("autoHideClone", autoHideClone)
                 put("whitelist", JSONArray(finalWl.toList()))
                 put("blacklist", JSONArray(finalBl.toList()))
-                put("changed", JSONArray(cleanChanged))
+                put("changed", JSONArray(changedPackages.filter { isValidConfigKey(it) }.distinct()))
             }.toString()
+        } catch (_: Throwable) {
+            return SyncStatus.FAILED
+        }
 
+        // Reject locally, before any IPC, what system_server would refuse anyway (too many entries,
+        // an oversized payload, or a persisted file above the reload limit), so the UI can show a
+        // specific message instead of a generic sync failure.
+        if (finalWl.size > MAX_ENTRIES) return SyncStatus.TOO_LARGE
+        if (finalBl.size > MAX_ENTRIES) return SyncStatus.TOO_LARGE
+        if (payload.length > MAX_IPC_PAYLOAD_CHARS) return SyncStatus.TOO_LARGE
+        val fileBytes = rulesToJson(HideRules(autoHide, autoHideClone, finalWl, finalBl))
+            .toString().toByteArray(Charsets.UTF_8).size
+        if (fileBytes > MAX_IPC_PAYLOAD_CHARS) return SyncStatus.TOO_LARGE
+
+        val synced = try {
             val launcherApps = context.getSystemService(LauncherApps::class.java)
             val res = launcherApps?.getActivityList("$IPC_UPDATE_PREFIX$payload", Process.myUserHandle())
-            res != null && res.isNotEmpty()
+            !res.isNullOrEmpty()
         } catch (_: Throwable) {
             false
         }
 
         // Commit locally only after system_server accepted and persisted the update. Otherwise the
         // UI reverts its on-screen state while local prefs would keep rules the system never applied.
-        if (synced) {
-            rules = HideRules(autoHide, autoHideClone, finalWl, finalBl)
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-                .putBoolean("autoHide", autoHide)
-                .putBoolean("autoHideClone", autoHideClone)
-                .putStringSet("whitelist", finalWl)
-                .putStringSet("blacklist", finalBl)
-                .apply()
-        }
-        return synced
+        if (!synced) return SyncStatus.FAILED
+        rules = HideRules(autoHide, autoHideClone, finalWl, finalBl)
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putBoolean("autoHide", autoHide)
+            .putBoolean("autoHideClone", autoHideClone)
+            .putStringSet("whitelist", finalWl)
+            .putStringSet("blacklist", finalBl)
+            .apply()
+        return SyncStatus.OK
     }
 
     fun exportConfigJson(): String {
