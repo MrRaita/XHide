@@ -4,6 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -110,8 +111,23 @@ class ShouldHidePackageTest {
     }
 
     @Test
-    fun invalidKeysAreIgnored() {
-        setup(blacklist = listOf("com.x; rm -rf", "../etc", ""))
-        assertFalse(ConfigStore.shouldHidePackage("com.x", 0, false))
+    fun updateWithInvalidKeysIsRejected() {
+        setup(blacklist = listOf("com.x"))
+        val bad = JSONObject().apply {
+            put("blacklist", JSONArray(listOf("com.y", "../etc")))
+        }
+        assertNull(ConfigStore.applySystemIpcUpdate(bad.toString()))
+        // Previous rules stay in effect; nothing from the rejected update leaks through.
+        assertTrue(ConfigStore.shouldHidePackage("com.x", 0, false))
+        assertFalse(ConfigStore.shouldHidePackage("com.y", 0, false))
+    }
+
+    @Test
+    fun updateWithTooManyEntriesIsRejected() {
+        setup(blacklist = listOf("com.x"))
+        val keys = (0..4096).map { "com.p$it" }
+        val bad = JSONObject().apply { put("whitelist", JSONArray(keys)) }
+        assertNull(ConfigStore.applySystemIpcUpdate(bad.toString()))
+        assertTrue(ConfigStore.shouldHidePackage("com.x", 0, false))
     }
 }

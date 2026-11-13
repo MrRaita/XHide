@@ -177,14 +177,24 @@ object ConfigStore {
      * Parses a persisted or IPC config object into a [HideRules] snapshot, enforcing entry limits,
      * key validation, and the "Hide XHide Icon" self-whitelist rule.
      */
-    private fun parseRules(json: JSONObject): HideRules {
+    private fun parseRules(json: JSONObject, strict: Boolean = false): HideRules {
+        // strict (IPC updates): reject instead of truncating or dropping entries, otherwise the UI
+        // would commit the full list while system_server applies a reduced one and the two diverge.
+        // Lenient (persisted file): keep whatever is valid rather than losing every rule.
         fun readKeys(name: String): MutableSet<String> {
             val out = mutableSetOf<String>()
             val arr = json.optJSONArray(name) ?: return out
+            if (strict) {
+                if (arr.length() > MAX_ENTRIES) throw IllegalArgumentException("Too many $name entries")
+            }
             val limit = minOf(arr.length(), MAX_ENTRIES)
             for (i in 0 until limit) {
                 val pkg = arr.optString(i)
-                if (isValidConfigKey(pkg)) out.add(pkg)
+                if (isValidConfigKey(pkg)) {
+                    out.add(pkg)
+                } else if (strict) {
+                    throw IllegalArgumentException("Invalid $name entry")
+                }
             }
             return out
         }
@@ -220,7 +230,7 @@ object ConfigStore {
         if (payload.length > MAX_IPC_PAYLOAD_CHARS) return null
         return try {
             val json = JSONObject(payload)
-            val newRules = parseRules(json)
+            val newRules = parseRules(json, strict = true)
 
             // Persist first and publish only on success, so memory, disk and the UI never diverge:
             // an unpersisted update would otherwise be reported as applied and silently revert on
