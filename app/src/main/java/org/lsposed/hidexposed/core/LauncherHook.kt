@@ -48,6 +48,7 @@ object LauncherHook {
     private const val TARGET_CLASS = "com.android.server.pm.LauncherAppsService\$LauncherAppsImpl"
     private const val USER_MANAGER_SERVICE_CLASS = "com.android.server.pm.UserManagerService"
     private const val EXTRA_ALL_USERS_QUERY = "hidexposed_all_users_query"
+    private const val EXTRA_CONFIG_QUERY = "hidexposed_config_query"
     private const val PER_USER_RANGE = 100000
     // Not a valid package name, so a launcher-activity query for it always returns an empty list.
     private const val IPC_REJECTED_PACKAGE = "__hidexposed_ipc_rejected__"
@@ -311,6 +312,11 @@ object LauncherHook {
                                 targetPackage == ConfigStore.IPC_PING -> {
                                     param.args[1] = ConfigStore.SELF_PACKAGE
                                 }
+                                targetPackage == ConfigStore.IPC_GET_CONFIG -> {
+                                    // Answer with XHide's own activity; the config is attached afterwards.
+                                    param.setObjectExtra(EXTRA_CONFIG_QUERY, true)
+                                    param.args[1] = ConfigStore.SELF_PACKAGE
+                                }
                                 targetPackage == ConfigStore.IPC_GET_ALL_USERS -> {
                                     param.setObjectExtra(EXTRA_ALL_USERS_QUERY, true)
                                     param.args[1] = null
@@ -341,6 +347,27 @@ object LauncherHook {
                         val userHandle = param.args[2] as? UserHandle
                         val userId = getUserId(userHandle)
                         val callingUid = Binder.getCallingUid()
+
+                        // Companion asked for the persisted config: attach it to copies of the reply's
+                        // ActivityInfo/ApplicationInfo so no cached PackageManager object is mutated.
+                        if (param.getObjectExtra(EXTRA_CONFIG_QUERY) == true) {
+                            if (!isCallerSelf(callingUid, param.thisObject)) return
+                            val slice = param.result ?: return
+                            val item = extractListFromResult(slice)?.firstOrNull() ?: return
+                            val ai = extractActivityInfo(item) ?: return
+                            val appCopy = ApplicationInfo(ai.applicationInfo ?: return)
+                            appCopy.metaData = android.os.Bundle().apply {
+                                putString(ConfigStore.IPC_CONFIG_META_KEY, ConfigStore.systemConfigJson())
+                            }
+                            val aiCopy = ActivityInfo(ai)
+                            aiCopy.applicationInfo = appCopy
+                            if (item is ResolveInfo) {
+                                item.activityInfo = aiCopy
+                            } else {
+                                XposedHelpers.setObjectField(item, "mActivityInfo", aiCopy)
+                            }
+                            return
+                        }
 
                         // If our companion UI requested all users' launcher activities in one call
                         if (param.getObjectExtra(EXTRA_ALL_USERS_QUERY) == true &&

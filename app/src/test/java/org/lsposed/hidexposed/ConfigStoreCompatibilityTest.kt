@@ -143,4 +143,25 @@ class ConfigStoreCompatibilityTest {
         assertFalse(ConfigStore.isValidConfigKey("../../../etc/shadow"))
         assertFalse(ConfigStore.isValidConfigKey("invalid key with spaces"))
     }
+
+    @Test
+    fun systemConfigRoundTripsThroughIpcEncoding() {
+        val payload = JSONObject().apply {
+            put("autoHide", false)
+            put("autoHideClone", true)
+            put("blacklist", JSONArray(listOf("10:com.youtube")))
+        }.toString()
+        assertNotNull(ConfigStore.applySystemIpcUpdate(payload))
+        val decoded = ConfigStore.decodeSystemConfig(ConfigStore.systemConfigJson())!!
+        assertFalse(decoded.autoHide)
+        assertTrue(decoded.blacklist.contains("10:com.youtube"))
+        assertTrue(decoded.whitelist.contains(ConfigStore.SELF_USER0_KEY))
+    }
+
+    @Test
+    fun malformedSystemConfigDecodesToNull() {
+        assertNull(ConfigStore.decodeSystemConfig(null))
+        assertNull(ConfigStore.decodeSystemConfig(""))
+        assertNull(ConfigStore.decodeSystemConfig("{not json"))
+    }
 }

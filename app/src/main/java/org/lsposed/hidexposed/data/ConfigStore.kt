@@ -58,6 +58,10 @@ object ConfigStore {
     const val IPC_PING = "${IPC_PREFIX}ping"
     const val IPC_GET_ALL_USERS = "${IPC_PREFIX}all_users"
     const val IPC_UPDATE_PREFIX = "${IPC_PREFIX}update:"
+    const val IPC_GET_CONFIG = "${IPC_PREFIX}get_config"
+
+    /** metaData key under which the hook attaches the system config to the IPC reply. */
+    const val IPC_CONFIG_META_KEY = "org.lsposed.hidexposed.SYSTEM_CONFIG"
 
     /**
      * Location of the persisted system config. Only overridden by host-side unit tests, which
@@ -259,6 +263,23 @@ object ConfigStore {
         }
     }
 
+    /** system_server side: the persisted rules as JSON, returned to the companion via IPC. */
+    fun systemConfigJson(): String {
+        ensureSystemLoaded()
+        return rulesToJson(rules).toString()
+    }
+
+    /** Parses a config received from system_server; null for missing or malformed data. */
+    internal fun decodeSystemConfig(json: String?): HideRules? {
+        if (json.isNullOrBlank()) return null
+        if (json.length > MAX_IPC_PAYLOAD_CHARS) return null
+        return try {
+            parseRules(JSONObject(json))
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
     private fun loadFromSystemFile() {
         try {
             val file = File(systemConfigPath)
@@ -351,6 +372,59 @@ object ConfigStore {
     // local commit of one caller can never interleave with another caller's.
     private val uiSyncLock = Any()
 
+    // Set once the system rules were read and adopted in this process. Older hooks do not know the
+    // get_config command and answer with an empty list, in which case adoption is simply skipped.
+    @Volatile
+    private var adoptedSystemRules = false
+
+    @Volatile
+    private var restoredNotice = false
+
+    private fun readSystemConfig(context: Context): HideRules? {
+        return try {
+            val launcherApps = context.getSystemService(LauncherApps::class.java) ?: return null
+            val res = launcherApps.getActivityList(IPC_GET_CONFIG, Process.myUserHandle())
+            val meta = res?.firstOrNull()?.applicationInfo?.metaData
+            decodeSystemConfig(meta?.getString(IPC_CONFIG_META_KEY))
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /**
+     * Replaces the local rules with the rules persisted by system_server, once per process, before
+     * anything is sent. The system always wins: local rules are only committed after the system
+     * accepted them, so they can only differ after a reinstall, cleared app data, or another build.
+     * Without this, the first sync after a reinstall would overwrite every system rule with the
+     * empty local state. Queued edits are kept and replayed on top.
+     */
+    private fun ensureAdoptedLocked(context: Context) {
+        if (adoptedSystemRules) return
+        val sys = readSystemConfig(context) ?: return
+        adoptedSystemRules = true
+        if (sys == rules) return
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putBoolean("autoHide", sys.autoHide)
+            .putBoolean("autoHideClone", sys.autoHideClone)
+            .putStringSet("whitelist", sys.whitelist)
+            .putStringSet("blacklist", sys.blacklist)
+            .apply()
+        rules = sys
+        restoredNotice = true
+    }
+
+    /** Adopts the system rules if not done yet in this process. */
+    fun adoptSystemRules(context: Context) = synchronized(uiSyncLock) {
+        ensureAdoptedLocked(context)
+    }
+
+    /** True once after adoption replaced local rules that differed from the system's. */
+    fun consumeRestoredNotice(): Boolean {
+        val v = restoredNotice
+        restoredNotice = false
+        return v
+    }
+
     /** The rules last committed locally (after the system accepted them). */
     fun currentRules(): HideRules = rules
 
@@ -372,6 +446,7 @@ object ConfigStore {
         op: PendingOp,
         moduleKeys: List<String> = emptyList()
     ): SyncResult = synchronized(uiSyncLock) {
+        ensureAdoptedLocked(context)
         val queued = pendingOps
         val all = PendingOps.enqueue(queued, op)
             ?: return@synchronized SyncResult(SyncStatus.TOO_LARGE, effectiveRules())
@@ -425,6 +500,7 @@ object ConfigStore {
      */
     fun replaceRules(context: Context, changedPackages: List<String>, newRules: HideRules): SyncResult =
         synchronized(uiSyncLock) {
+            ensureAdoptedLocked(context)
             // On success the superseded queue is cleared in the same SharedPreferences write.
             val status = saveUiPrefsAndSyncLocked(
                 context, newRules.autoHide, newRules.autoHideClone, newRules.whitelist, newRules.blacklist,
@@ -439,6 +515,7 @@ object ConfigStore {
      * can never succeed; FAILED keeps it for the next attempt. An empty queue returns OK.
      */
     fun flushPendingOps(context: Context, changedPackages: List<String>): SyncStatus = synchronized(uiSyncLock) {
+        ensureAdoptedLocked(context)
         val queued = pendingOps
         if (queued.isEmpty()) return@synchronized SyncStatus.OK
         val next = PendingOps.applyAll(rules, queued)
@@ -464,6 +541,7 @@ object ConfigStore {
      * overwritten by an outdated snapshot. Returns OK when nothing was stale or the sync succeeded.
      */
     fun purgeStaleRules(context: Context, isStale: (String) -> Boolean): SyncStatus = synchronized(uiSyncLock) {
+        ensureAdoptedLocked(context)
         val current = rules
         val staleWl = current.whitelist.filter(isStale)
         val staleBl = current.blacklist.filter(isStale)
