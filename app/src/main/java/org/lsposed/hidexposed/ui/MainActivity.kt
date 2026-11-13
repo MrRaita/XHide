@@ -512,6 +512,26 @@ fun MainScreen(
                 }
                 isHookActive = active
                 apps = loadedApps
+
+                // Deliver edits queued while the hook was inactive. Runs under the same fair mutex as
+                // user edits so it cannot interleave with them. Module keys are included because a
+                // queued auto-hide change affects every detected module.
+                if (active) {
+                    if (ConfigStore.pendingCount() > 0) {
+                        val moduleKeys = loadedApps.filter { it.isXposedModule }.map { it.uniqueKey }
+                        val flushStatus = syncMutex.withLock {
+                            withContext(Dispatchers.IO) { ConfigStore.flushPendingOps(context, moduleKeys) }
+                        }
+                        pendingCount = ConfigStore.pendingCount()
+                        when (flushStatus) {
+                            ConfigStore.SyncStatus.OK ->
+                                Toast.makeText(context, strings.pendingAppliedToast, Toast.LENGTH_SHORT).show()
+                            ConfigStore.SyncStatus.TOO_LARGE ->
+                                Toast.makeText(context, strings.configTooLargeToast, Toast.LENGTH_LONG).show()
+                            else -> Unit
+                        }
+                    }
+                }
                 // The app list loader may have purged stale rules; show what is actually committed,
                 // unless an edit is still pending (it refreshes the state itself when it finishes).
                 if (pendingSyncs == 0) showRules(ConfigStore.effectiveRules())
