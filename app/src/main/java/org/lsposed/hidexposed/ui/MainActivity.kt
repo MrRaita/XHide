@@ -507,6 +507,10 @@ fun MainScreen(
 
                 val startTime = System.currentTimeMillis()
 
+                // Read the rules persisted by system_server before anything can be sent, so a reinstall
+                // or cleared app data never overwrites the system rules with an empty local state.
+                withContext(Dispatchers.IO) { ConfigStore.adoptSystemRules(context) }
+
                 val (active, loadedApps, launcher) = withContext(Dispatchers.IO) {
                     val activeDef = async { ConfigStore.pingSystemHook(context) }
                     val loadedAppsDef = async { loadInstalledAppsAcrossProfiles(context) }
@@ -515,6 +519,9 @@ fun MainScreen(
                 }
                 isHookActive = active
                 apps = loadedApps
+                if (ConfigStore.consumeRestoredNotice()) {
+                    Toast.makeText(context, strings.rulesRestoredToast, Toast.LENGTH_SHORT).show()
+                }
 
                 // Deliver edits queued while the hook was inactive. Runs under the same fair mutex as
                 // user edits so it cannot interleave with them. Module keys are included because a
