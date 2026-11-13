@@ -155,6 +155,8 @@ import org.lsposed.hidexposed.core.AppDiagnostics
 import org.lsposed.hidexposed.core.ModuleCache
 import org.lsposed.hidexposed.data.AppSortMode
 import org.lsposed.hidexposed.data.ConfigStore
+import org.lsposed.hidexposed.data.PendingOp
+import org.lsposed.hidexposed.data.applyTo
 import org.lsposed.hidexposed.ui.theme.HideXposedTheme
 import android.util.LruCache
 import java.io.File
@@ -377,6 +379,7 @@ fun MainScreen(
     var isRefreshing by remember { mutableStateOf(false) }
     var isFetchingData by remember { mutableStateOf(false) }
     var showResetConfirmDialog by remember { mutableStateOf(false) }
+    var showDiscardPendingDialog by remember { mutableStateOf(false) }
     var pendingImport by remember { mutableStateOf<PendingImportConfig?>(null) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var debouncedQuery by rememberSaveable { mutableStateOf("") }
@@ -443,12 +446,6 @@ fun MainScreen(
         blacklist = r.blacklist
     }
 
-    /**
-     * Applies [transform] to the latest committed rules inside ConfigStore's sync lock. Callers
-     * describe a change instead of sending a full list, so concurrent edits and the stale-rule
-     * cleanup cannot undo each other. The on-screen state is replaced by the committed result,
-     * or by the unchanged committed rules when the system rejected the update.
-     */
     // Fair (FIFO) mutex taken on the main dispatcher in submission order, so edits commit in the
     // order the user made them. ConfigStore's monitor lock gives no ordering guarantee between
     // IO threads; it only coordinates with the stale-rule cleanup.
@@ -458,30 +455,46 @@ fun MainScreen(
     // are pending, the on-screen state holds their optimistic values and must not be replaced.
     var pendingSyncs by remember { mutableStateOf(0) }
 
-    fun syncWithSystem(
-        changedPkgs: List<String>,
-        transform: (ConfigStore.HideRules) -> ConfigStore.HideRules
+    // Number of edits queued while the hook was inactive; mirrors ConfigStore.pendingCount().
+    var pendingCount by remember { mutableStateOf(ConfigStore.pendingCount()) }
+
+    /**
+     * Runs [action] (a ConfigStore sync) on IO under the fair mutex, then shows the effective rules
+     * (committed plus queued) once no other edit is pending, and reports the outcome. [onOk] runs
+     * only when the change was applied to the system.
+     */
+    fun runSync(
+        onOk: (() -> Unit)? = null,
+        action: () -> ConfigStore.SyncResult
     ) {
         pendingSyncs++
         scope.launch {
             val result = syncMutex.withLock {
-                withContext(Dispatchers.IO) {
-                    ConfigStore.updateRules(context, changedPkgs, transform)
-                }
+                withContext(Dispatchers.IO) { action() }
             }
             pendingSyncs--
             // result.rules is the snapshot taken inside the lock; a later cleanup commit may already
-            // have superseded it. Show the latest committed rules, and only once no edit is pending
+            // have superseded it. Show the latest effective rules, and only once no edit is pending
             // so a queued edit's optimistic state does not flicker back.
-            if (pendingSyncs == 0) showRules(ConfigStore.currentRules())
+            if (pendingSyncs == 0) showRules(ConfigStore.effectiveRules())
+            pendingCount = ConfigStore.pendingCount()
             when (result.status) {
-                ConfigStore.SyncStatus.OK -> Unit
+                ConfigStore.SyncStatus.OK -> onOk?.invoke()
+                ConfigStore.SyncStatus.QUEUED ->
+                    Toast.makeText(context, strings.changeQueuedToast, Toast.LENGTH_SHORT).show()
                 ConfigStore.SyncStatus.TOO_LARGE ->
                     Toast.makeText(context, strings.configTooLargeToast, Toast.LENGTH_LONG).show()
                 ConfigStore.SyncStatus.FAILED ->
                     Toast.makeText(context, strings.syncFailedToast, Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    /** Applies a single edit; queued for later delivery if the hook is inactive. */
+    fun syncWithSystem(changedPkgs: List<String>, op: PendingOp) {
+        // Same module-key input as the flush path, used if a queued auto-hide change is delivered here.
+        val moduleKeys = apps.filter { it.isXposedModule }.map { it.uniqueKey }.distinct()
+        runSync { ConfigStore.updateRules(context, changedPkgs, op, moduleKeys) }
     }
 
     fun refreshState(showToastOnDone: Boolean = false) {
@@ -502,9 +515,29 @@ fun MainScreen(
                 }
                 isHookActive = active
                 apps = loadedApps
+
+                // Deliver edits queued while the hook was inactive. Runs under the same fair mutex as
+                // user edits so it cannot interleave with them. Module keys are included because a
+                // queued auto-hide change affects every detected module.
+                if (active) {
+                    if (ConfigStore.pendingCount() > 0) {
+                        val moduleKeys = loadedApps.filter { it.isXposedModule }.map { it.uniqueKey }
+                        val flushStatus = syncMutex.withLock {
+                            withContext(Dispatchers.IO) { ConfigStore.flushPendingOps(context, moduleKeys) }
+                        }
+                        pendingCount = ConfigStore.pendingCount()
+                        when (flushStatus) {
+                            ConfigStore.SyncStatus.OK ->
+                                Toast.makeText(context, strings.pendingAppliedToast, Toast.LENGTH_SHORT).show()
+                            ConfigStore.SyncStatus.TOO_LARGE ->
+                                Toast.makeText(context, strings.configTooLargeToast, Toast.LENGTH_LONG).show()
+                            else -> Unit
+                        }
+                    }
+                }
                 // The app list loader may have purged stale rules; show what is actually committed,
                 // unless an edit is still pending (it refreshes the state itself when it finishes).
-                if (pendingSyncs == 0) showRules(ConfigStore.currentRules())
+                if (pendingSyncs == 0) showRules(ConfigStore.effectiveRules())
                 defaultLauncher = launcher
 
                 val userManager = context.getSystemService(UserManager::class.java)
@@ -576,37 +609,16 @@ fun MainScreen(
     }
 
     fun updateAppHidden(entry: AppEntry, hideInLauncher: Boolean) {
-        fun applyToggle(r: ConfigStore.HideRules): ConfigStore.HideRules {
-            val newWl = r.whitelist.toMutableSet()
-            val newBl = r.blacklist.toMutableSet()
-            val uKey = entry.uniqueKey
-
-            newWl.remove(entry.packageName)
-            newBl.remove(entry.packageName)
-
-            // ConfigStore force-whitelists XHide itself unless it is explicitly blacklisted, so auto-hide
-            // never applies to it. Treat it as visible-by-default so hiding writes a blacklist entry.
-            val isSelf = uKey == ConfigStore.SELF_USER0_KEY
-            val autoHideForUser = if (entry.userId == 0) r.autoHide else (r.autoHide and r.autoHideClone)
-            val defaultHidden = !isSelf and entry.isXposedModule and autoHideForUser
-
-            if (hideInLauncher) {
-                newWl.remove(uKey)
-                if (!defaultHidden) {
-                    newBl.add(uKey)
-                }
-            } else {
-                newBl.remove(uKey)
-                if (defaultHidden) {
-                    newWl.add(uKey)
-                }
-            }
-            return r.copy(whitelist = newWl, blacklist = newBl)
-        }
-
-        // Optimistic update from the on-screen state; replaced by the committed result.
-        showRules(applyToggle(ConfigStore.HideRules(autoHideModules, autoHideCloneModules, whitelist, blacklist)))
-        syncWithSystem(changedPkgs = listOf(entry.uniqueKey)) { applyToggle(it) }
+        val op = PendingOp.Toggle(
+            key = entry.uniqueKey,
+            packageName = entry.packageName,
+            userId = entry.userId,
+            isXposedModule = entry.isXposedModule,
+            hide = hideInLauncher
+        )
+        // Optimistic update from the on-screen state; replaced by the effective rules afterwards.
+        showRules(op.applyTo(ConfigStore.HideRules(autoHideModules, autoHideCloneModules, whitelist, blacklist)))
+        syncWithSystem(changedPkgs = listOf(entry.uniqueKey), op = op)
     }
 
     // SAF File Launchers for JSON Backup Export & Import
@@ -691,6 +703,35 @@ fun MainScreen(
         }
     }
 
+    if (showDiscardPendingDialog) {
+        AlertDialog(
+            onDismissRequest = { showDiscardPendingDialog = false },
+            title = { Text(text = strings.discardPendingTitle, fontWeight = FontWeight.Bold) },
+            text = { Text(text = strings.discardPendingMessage) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDiscardPendingDialog = false
+                        scope.launch {
+                            syncMutex.withLock {
+                                withContext(Dispatchers.IO) { ConfigStore.discardPendingOps(context) }
+                            }
+                            pendingCount = ConfigStore.pendingCount()
+                            if (pendingSyncs == 0) showRules(ConfigStore.effectiveRules())
+                        }
+                    }
+                ) {
+                    Text(text = strings.discardPendingBtn, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDiscardPendingDialog = false }) {
+                    Text(text = strings.dismissBtn)
+                }
+            }
+        )
+    }
+
     if (showResetConfirmDialog) {
         AlertDialog(
             onDismissRequest = { showResetConfirmDialog = false },
@@ -708,8 +749,9 @@ fun MainScreen(
                         )
                         showRules(defaults)
                         val allPkgs = apps.map { it.uniqueKey }.distinct()
-                        syncWithSystem(changedPkgs = allPkgs) { defaults }
-                        Toast.makeText(context, strings.resetDoneToast, Toast.LENGTH_SHORT).show()
+                        runSync(onOk = {
+                            Toast.makeText(context, strings.resetDoneToast, Toast.LENGTH_SHORT).show()
+                        }) { ConfigStore.replaceRules(context, allPkgs, defaults) }
                     }
                 ) {
                     Text(text = strings.resetConfirmBtn, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
@@ -750,8 +792,9 @@ fun MainScreen(
                         pendingImport = null
 
                         val allPkgs = apps.map { it.uniqueKey }.distinct()
-                        syncWithSystem(changedPkgs = allPkgs) { imported }
-                        Toast.makeText(context, strings.importedToast, Toast.LENGTH_SHORT).show()
+                        runSync(onOk = {
+                            Toast.makeText(context, strings.importedToast, Toast.LENGTH_SHORT).show()
+                        }) { ConfigStore.replaceRules(context, allPkgs, imported) }
                     }
                 ) {
                     Text(text = strings.importConfirmBtn, fontWeight = FontWeight.Bold)
@@ -850,6 +893,8 @@ fun MainScreen(
                 when (currentTab) {
                     MainTab.HOME -> HomeTabScreen(
                         strings = strings,
+                        pendingCount = pendingCount,
+                        onDiscardPending = { showDiscardPendingDialog = true },
                         isHookActive = isHookActive,
                         apps = apps,
                         availableUserIds = availableUserIds,
@@ -925,7 +970,7 @@ fun MainScreen(
                         onToggleAutoHide = { checked ->
                             autoHideModules = checked
                             val modPkgs = apps.filter { it.isXposedModule }.map { it.uniqueKey }.distinct()
-                            syncWithSystem(changedPkgs = modPkgs) { it.copy(autoHide = checked) }
+                            syncWithSystem(changedPkgs = modPkgs, op = PendingOp.SetAutoHide(checked))
                         },
                         onToggleAutoHideClone = { checked ->
                             autoHideCloneModules = checked
@@ -933,7 +978,7 @@ fun MainScreen(
                                 .filter { it.userId != 0 }
                                 .map { it.uniqueKey }
                                 .distinct()
-                            syncWithSystem(changedPkgs = modPkgs) { it.copy(autoHideClone = checked) }
+                            syncWithSystem(changedPkgs = modPkgs, op = PendingOp.SetAutoHideClone(checked))
                         },
                         onToggleShowSystemApps = { showSys ->
                             showSystemApps = showSys
@@ -983,6 +1028,8 @@ private fun HomeTabScreen(
     onOpenAppsFilter: (FilterMode) -> Unit,
     onOpenSettings: () -> Unit,
     onRefreshLauncher: () -> Unit,
+    pendingCount: Int,
+    onDiscardPending: () -> Unit,
     onToggleAppHidden: (AppEntry, Boolean) -> Unit
 ) {
     val hiddenApps = remember(apps, showSystemApps, autoHideModules, autoHideCloneModules, whitelist, blacklist) {
@@ -1087,6 +1134,26 @@ private fun HomeTabScreen(
                         modifier = Modifier.height(30.dp)
                     ) {
                         Text(strings.hookInactiveHelpBtn, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                if (pendingCount > 0) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = String.format(java.util.Locale.getDefault(), strings.pendingChangesFormat, pendingCount),
+                            fontSize = 11.5.sp,
+                            lineHeight = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = cardContentColor,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(
+                            onClick = onDiscardPending,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.heightIn(min = 48.dp)
+                        ) {
+                            Text(strings.discardPendingBtn, fontSize = 11.5.sp, color = cardContentColor)
+                        }
                     }
                 }
             }
@@ -2254,14 +2321,16 @@ private fun SettingsTabScreen(
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
             CompactActionRow(
                 title = strings.importConfigTitle,
-                subtitle = strings.importConfigDesc,
+                subtitle = if (isHookActive == true) strings.importConfigDesc else strings.requiresActiveHook,
+                enabled = isHookActive == true,
                 onClick = onRequestImportFile
             )
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
             CompactActionRow(
                 title = strings.resetAllTitle,
-                subtitle = strings.resetAllDesc,
+                subtitle = if (isHookActive == true) strings.resetAllDesc else strings.requiresActiveHook,
                 isDestructive = true,
+                enabled = isHookActive == true,
                 onClick = onResetAll
             )
         }
@@ -2400,12 +2469,16 @@ private fun CompactActionRow(
     title: String,
     subtitle: String,
     isDestructive: Boolean = false,
+    enabled: Boolean = true,
     onClick: () -> Unit
 ) {
+    // Disabled rows stay visible with an explanation instead of disappearing, so the user knows
+    // the action exists and what unlocks it.
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .alpha(if (enabled) 1f else 0.38f)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(vertical = 6.dp)
     ) {
         Text(
