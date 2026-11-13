@@ -379,6 +379,7 @@ fun MainScreen(
     var isRefreshing by remember { mutableStateOf(false) }
     var isFetchingData by remember { mutableStateOf(false) }
     var showResetConfirmDialog by remember { mutableStateOf(false) }
+    var showDiscardPendingDialog by remember { mutableStateOf(false) }
     var pendingImport by remember { mutableStateOf<PendingImportConfig?>(null) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var debouncedQuery by rememberSaveable { mutableStateOf("") }
@@ -700,6 +701,35 @@ fun MainScreen(
         }
     }
 
+    if (showDiscardPendingDialog) {
+        AlertDialog(
+            onDismissRequest = { showDiscardPendingDialog = false },
+            title = { Text(text = strings.discardPendingTitle, fontWeight = FontWeight.Bold) },
+            text = { Text(text = strings.discardPendingMessage) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDiscardPendingDialog = false
+                        scope.launch {
+                            syncMutex.withLock {
+                                withContext(Dispatchers.IO) { ConfigStore.discardPendingOps(context) }
+                            }
+                            pendingCount = ConfigStore.pendingCount()
+                            if (pendingSyncs == 0) showRules(ConfigStore.effectiveRules())
+                        }
+                    }
+                ) {
+                    Text(text = strings.discardPendingBtn, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDiscardPendingDialog = false }) {
+                    Text(text = strings.dismissBtn)
+                }
+            }
+        )
+    }
+
     if (showResetConfirmDialog) {
         AlertDialog(
             onDismissRequest = { showResetConfirmDialog = false },
@@ -861,6 +891,8 @@ fun MainScreen(
                 when (currentTab) {
                     MainTab.HOME -> HomeTabScreen(
                         strings = strings,
+                        pendingCount = pendingCount,
+                        onDiscardPending = { showDiscardPendingDialog = true },
                         isHookActive = isHookActive,
                         apps = apps,
                         availableUserIds = availableUserIds,
@@ -994,6 +1026,8 @@ private fun HomeTabScreen(
     onOpenAppsFilter: (FilterMode) -> Unit,
     onOpenSettings: () -> Unit,
     onRefreshLauncher: () -> Unit,
+    pendingCount: Int,
+    onDiscardPending: () -> Unit,
     onToggleAppHidden: (AppEntry, Boolean) -> Unit
 ) {
     val hiddenApps = remember(apps, showSystemApps, autoHideModules, autoHideCloneModules, whitelist, blacklist) {
@@ -1098,6 +1132,26 @@ private fun HomeTabScreen(
                         modifier = Modifier.height(30.dp)
                     ) {
                         Text(strings.hookInactiveHelpBtn, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                if (pendingCount > 0) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = String.format(java.util.Locale.getDefault(), strings.pendingChangesFormat, pendingCount),
+                            fontSize = 11.5.sp,
+                            lineHeight = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = cardContentColor,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(
+                            onClick = onDiscardPending,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.heightIn(min = 48.dp)
+                        ) {
+                            Text(strings.discardPendingBtn, fontSize = 11.5.sp, color = cardContentColor)
+                        }
                     }
                 }
             }
@@ -2265,14 +2319,16 @@ private fun SettingsTabScreen(
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
             CompactActionRow(
                 title = strings.importConfigTitle,
-                subtitle = strings.importConfigDesc,
+                subtitle = if (isHookActive == true) strings.importConfigDesc else strings.requiresActiveHook,
+                enabled = isHookActive == true,
                 onClick = onRequestImportFile
             )
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
             CompactActionRow(
                 title = strings.resetAllTitle,
-                subtitle = strings.resetAllDesc,
+                subtitle = if (isHookActive == true) strings.resetAllDesc else strings.requiresActiveHook,
                 isDestructive = true,
+                enabled = isHookActive == true,
                 onClick = onResetAll
             )
         }
@@ -2411,12 +2467,16 @@ private fun CompactActionRow(
     title: String,
     subtitle: String,
     isDestructive: Boolean = false,
+    enabled: Boolean = true,
     onClick: () -> Unit
 ) {
+    // Disabled rows stay visible with an explanation instead of disappearing, so the user knows
+    // the action exists and what unlocks it.
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .alpha(if (enabled) 1f else 0.38f)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(vertical = 6.dp)
     ) {
         Text(
