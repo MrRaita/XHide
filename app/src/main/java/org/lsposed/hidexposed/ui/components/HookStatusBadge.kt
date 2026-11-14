@@ -3,10 +3,6 @@ package org.lsposed.hidexposed.ui.components
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -67,7 +63,8 @@ fun HookStatusBadge(
     state: Boolean?,
     color: Color,
     modifier: Modifier = Modifier,
-    size: Dp = 20.dp
+    size: Dp = 20.dp,
+    active: Boolean = true
 ) {
     var shown by remember { mutableStateOf(state) }
     var morph by remember { mutableStateOf(Morph(polygonFor(state), polygonFor(state))) }
@@ -82,12 +79,19 @@ fun HookStatusBadge(
         }
     }
 
-    val rotation = rememberInfiniteTransition(label = "badgeSpin").animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Restart),
-        label = "badgeRotation"
-    )
+    // Spins only while the Home tab is on screen; the pager keeps neighbouring tabs composed,
+    // and an infinite animation there would keep producing frames for nothing.
+    val rotation = remember { Animatable(0f) }
+    LaunchedEffect(active) {
+        if (!active) return@LaunchedEffect
+        while (true) {
+            val angle = rotation.value % 360f
+            rotation.snapTo(angle)
+            val remaining = ((360f - angle) / 360f * 9000f).toInt().coerceAtLeast(1)
+            rotation.animateTo(360f, tween(remaining, easing = LinearEasing))
+            rotation.snapTo(0f)
+        }
+    }
 
     Box(
         modifier = modifier

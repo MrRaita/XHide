@@ -97,11 +97,7 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.platform.LocalConfiguration
@@ -1343,7 +1339,8 @@ private fun HomeTabScreen(
                     HookStatusBadge(
                         state = isHookActive,
                         color = dotColor,
-                        size = 18.dp
+                        size = 18.dp,
+                        active = isActive
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
@@ -1579,7 +1576,7 @@ private fun HomeTabScreen(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 if (hiddenApps.isEmpty()) {
-                    EmptyHiddenState(text = strings.noHiddenAppsYet)
+                    EmptyHiddenState(text = strings.noHiddenAppsYet, active = isActive)
                 } else {
                     LazyRow(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1648,16 +1645,16 @@ private fun HomeTabScreen(
 }
 
 @Composable
-private fun EmptyHiddenState(text: String) {
-    val bob by rememberInfiniteTransition(label = "emptyBob").animateFloat(
-        initialValue = -3f,
-        targetValue = 3f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1800, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "emptyBobY"
-    )
+private fun EmptyHiddenState(text: String, active: Boolean = true) {
+    // Bobs only while Home is on screen (the pager keeps neighbouring tabs composed).
+    val bob = remember { Animatable(-3f) }
+    LaunchedEffect(active) {
+        if (!active) return@LaunchedEffect
+        while (true) {
+            bob.animateTo(3f, tween(1800, easing = FastOutSlowInEasing))
+            bob.animateTo(-3f, tween(1800, easing = FastOutSlowInEasing))
+        }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1671,7 +1668,7 @@ private fun EmptyHiddenState(text: String) {
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier
                 .size(28.dp)
-                .graphicsLayer { translationY = bob.dp.toPx() }
+                .graphicsLayer { translationY = bob.value.dp.toPx() }
         )
         Text(
             text = text,
