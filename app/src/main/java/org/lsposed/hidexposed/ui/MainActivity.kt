@@ -166,7 +166,6 @@ import org.lsposed.hidexposed.ui.theme.HideXposedTheme
 import android.util.LruCache
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
-import android.content.ClipData
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
@@ -1176,8 +1175,7 @@ fun MainScreen(
                                         listState = appsListState,
                                         onToggleAppHidden = { entry, hide ->
                                             toggleWithUndo(entry, hide)
-                                        },
-                                        onNotify = { message -> showNotice(message) }
+                                        }
                                     )
                                 }
                             }
@@ -1768,8 +1766,7 @@ private fun AppsTabScreen(
     onSortModeChange: (AppSortMode) -> Unit,
     isEntryHidden: (AppEntry) -> Boolean,
     listState: LazyListState,
-    onToggleAppHidden: (AppEntry, Boolean) -> Unit,
-    onNotify: (String) -> Unit
+    onToggleAppHidden: (AppEntry, Boolean) -> Unit
 ) {
     val viewScopeKey = remember(filterMode, debouncedQuery, sortMode, showSystemApps) {
         val filterTag = when (val mode = filterMode) {
@@ -1809,36 +1806,6 @@ private fun AppsTabScreen(
     val scopeTracker = remember(viewScopeKey) { AppsListScopeTracker() }
 
     val header = remember { CollapsingHeaderState() }
-    val appContext = LocalContext.current
-    var expandedKey by remember { mutableStateOf<String?>(null) }
-
-    fun handleAction(entry: AppEntry, action: AppAction) {
-        when (action) {
-            AppAction.INFO -> try {
-                appContext.startActivity(
-                    Intent(
-                        android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                        android.net.Uri.fromParts("package", entry.packageName, null)
-                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                )
-            } catch (_: Throwable) {
-            }
-            AppAction.OPEN -> try {
-                appContext.packageManager.getLaunchIntentForPackage(entry.packageName)?.let {
-                    appContext.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                }
-            } catch (_: Throwable) {
-            }
-            AppAction.COPY -> {
-                val clipboard = appContext.getSystemService(android.content.ClipboardManager::class.java)
-                clipboard?.setPrimaryClip(ClipData.newPlainText("package", entry.packageName))
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-                    onNotify(strings.packageCopiedToast)
-                }
-            }
-        }
-    }
-
     val (filteredApps, itemKeyVersions) = remember(
         apps,
         debouncedQuery,
@@ -2180,11 +2147,6 @@ private fun AppsTabScreen(
                         AppItemRow(
                             entry = entry,
                             isHidden = entry.uniqueKey in actualHiddenKeys,
-                            expanded = expandedKey == entry.uniqueKey,
-                            onExpandToggle = {
-                                expandedKey = if (expandedKey == entry.uniqueKey) null else entry.uniqueKey
-                            },
-                            onAction = { action -> handleAction(entry, action) },
                             strings = strings,
                             sortMode = sortMode,
                             modifier = Modifier.staggeredEnter(
@@ -2213,16 +2175,11 @@ private fun AppsTabScreen(
     }
 }
 
-private enum class AppAction { INFO, OPEN, COPY }
-
 @Composable
 private fun AppItemRow(
     entry: AppEntry,
     isHidden: Boolean,
     strings: AppStrings,
-    expanded: Boolean,
-    onExpandToggle: () -> Unit,
-    onAction: (AppAction) -> Unit,
     sortMode: AppSortMode = AppSortMode.NAME_ASC,
     modifier: Modifier = Modifier,
     onToggle: (Boolean) -> Unit
@@ -2233,29 +2190,19 @@ private fun AppItemRow(
     val shape = RoundedCornerShape(10.dp)
 
     val rowColor = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp)
-    val lift by animateDpAsState(
-        targetValue = if (expanded) 6.dp else 0.dp,
-        animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec<Dp>(),
-        label = "rowLift"
-    )
 
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .pressScale(interaction, 0.985f),
         shape = shape,
-        color = rowColor,
-        shadowElevation = lift.coerceAtLeast(0.dp)
+        color = rowColor
     ) {
         Column(
             modifier = Modifier.combinedClickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
                 role = Role.Switch,
-                onLongClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onExpandToggle()
-                },
                 onClick = {
                     haptic.performHapticFeedback(
                         if (isHidden) HapticFeedbackType.ToggleOff else HapticFeedbackType.ToggleOn
@@ -2354,29 +2301,6 @@ private fun AppItemRow(
                     checked = isHidden,
                     pressed = pressed
                 )
-            }
-
-            AnimatedVisibility(visible = expanded) {
-                val actions = buildList {
-                    add(AppAction.INFO to strings.appActionInfo)
-                    if (entry.userId == 0 && entry.hasLauncherIcon) add(AppAction.OPEN to strings.appActionOpen)
-                    add(AppAction.COPY to strings.appActionCopy)
-                }
-                SingleChoiceSegmentedButtonRow(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 10.dp, end = 10.dp, bottom = 8.dp)
-                ) {
-                    actions.forEachIndexed { index, (action, label) ->
-                        SegmentedButton(
-                            selected = false,
-                            onClick = { onAction(action) },
-                            shape = SegmentedButtonDefaults.itemShape(index = index, count = actions.size)
-                        ) {
-                            Text(label, fontSize = 12.sp, maxLines = 1)
-                        }
-                    }
-                }
             }
         }
     }

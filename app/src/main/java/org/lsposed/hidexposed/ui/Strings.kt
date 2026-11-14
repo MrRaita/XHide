@@ -118,11 +118,7 @@ data class AppStrings(
     val dismissBtn: String,
     val undoBtn: String,
     val snackHiddenFmt: String,
-    val snackShownFmt: String,
-    val appActionInfo: String,
-    val appActionOpen: String,
-    val appActionCopy: String,
-    val packageCopiedToast: String
+    val snackShownFmt: String
 )
 
 object Localization {
@@ -265,11 +261,7 @@ object Localization {
         dismissBtn = "Kapat",
         undoBtn = "Geri al",
         snackHiddenFmt = "%s gizlendi",
-        snackShownFmt = "%s görünür yapıldı",
-        appActionInfo = "Bilgi",
-        appActionOpen = "Aç",
-        appActionCopy = "Paketi kopyala",
-        packageCopiedToast = "Paket adı kopyalandı"
+        snackShownFmt = "%s görünür yapıldı"
     )
 
     private val EnStrings = AppStrings(
@@ -386,11 +378,7 @@ object Localization {
         dismissBtn = "Dismiss",
         undoBtn = "Undo",
         snackHiddenFmt = "%s hidden",
-        snackShownFmt = "%s shown",
-        appActionInfo = "Info",
-        appActionOpen = "Open",
-        appActionCopy = "Copy package",
-        packageCopiedToast = "Package name copied"
+        snackShownFmt = "%s shown"
     )
 
     private val DeStrings = AppStrings(
@@ -507,11 +495,7 @@ object Localization {
         dismissBtn = "Schließen",
         undoBtn = "Rückgängig",
         snackHiddenFmt = "%s ausgeblendet",
-        snackShownFmt = "%s eingeblendet",
-        appActionInfo = "Info",
-        appActionOpen = "Öffnen",
-        appActionCopy = "Paket kopieren",
-        packageCopiedToast = "Paketname kopiert"
+        snackShownFmt = "%s eingeblendet"
     )
 
     private val RuStrings = AppStrings(
@@ -628,11 +612,7 @@ object Localization {
         dismissBtn = "Закрыть",
         undoBtn = "Отменить",
         snackHiddenFmt = "%s скрыто",
-        snackShownFmt = "%s показано",
-        appActionInfo = "Инфо",
-        appActionOpen = "Открыть",
-        appActionCopy = "Копировать пакет",
-        packageCopiedToast = "Имя пакета скопировано"
+        snackShownFmt = "%s показано"
     )
 
     private val ZhStrings = AppStrings(
@@ -749,10 +729,6 @@ object Localization {
         dismissBtn = "关闭",
         undoBtn = "撤销",
         snackHiddenFmt = "已隐藏 %s",
-        snackShownFmt = "已显示 %s",
-        appActionInfo = "信息",
-        appActionOpen = "打开",
-        appActionCopy = "复制包名",
-        packageCopiedToast = "包名已复制"
+        snackShownFmt = "已显示 %s"
     )
 }
