@@ -266,7 +266,7 @@ object Localization {
         undoBtn = "Geri al",
         snackHiddenFmt = "%s gizlendi",
         snackShownFmt = "%s görünür yapıldı",
-        appActionInfo = "Uygulama bilgisi",
+        appActionInfo = "Bilgi",
         appActionOpen = "Aç",
         appActionCopy = "Paketi kopyala",
         packageCopiedToast = "Paket adı kopyalandı"
@@ -387,7 +387,7 @@ object Localization {
         undoBtn = "Undo",
         snackHiddenFmt = "%s hidden",
         snackShownFmt = "%s shown",
-        appActionInfo = "App info",
+        appActionInfo = "Info",
         appActionOpen = "Open",
         appActionCopy = "Copy package",
         packageCopiedToast = "Package name copied"
@@ -508,7 +508,7 @@ object Localization {
         undoBtn = "Rückgängig",
         snackHiddenFmt = "%s ausgeblendet",
         snackShownFmt = "%s eingeblendet",
-        appActionInfo = "App-Info",
+        appActionInfo = "Info",
         appActionOpen = "Öffnen",
         appActionCopy = "Paket kopieren",
         packageCopiedToast = "Paketname kopiert"
@@ -629,7 +629,7 @@ object Localization {
         undoBtn = "Отменить",
         snackHiddenFmt = "%s скрыто",
         snackShownFmt = "%s показано",
-        appActionInfo = "О приложении",
+        appActionInfo = "Инфо",
         appActionOpen = "Открыть",
         appActionCopy = "Копировать пакет",
         packageCopiedToast = "Имя пакета скопировано"
@@ -750,7 +750,7 @@ object Localization {
         undoBtn = "撤销",
         snackHiddenFmt = "已隐藏 %s",
         snackShownFmt = "已显示 %s",
-        appActionInfo = "应用信息",
+        appActionInfo = "信息",
         appActionOpen = "打开",
         appActionCopy = "复制包名",
         packageCopiedToast = "包名已复制"
