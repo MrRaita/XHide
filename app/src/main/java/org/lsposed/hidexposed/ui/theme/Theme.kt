@@ -1,13 +1,18 @@
 package org.lsposed.hidexposed.ui.theme
 
 import android.os.Build
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.MaterialExpressiveTheme
+import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
@@ -36,7 +41,7 @@ fun HideXposedTheme(
         else -> DefaultLightScheme
     }
 
-    val colorScheme = if (darkTheme && amoledBlack) {
+    val targetScheme = if (darkTheme && amoledBlack) {
         baseScheme.copy(
             background = Color.Black,
             surface = Color.Black,
@@ -53,8 +58,62 @@ fun HideXposedTheme(
         baseScheme
     }
 
-    MaterialTheme(
+    // Theme / palette / AMOLED changes cross-fade instead of snapping.
+    val colorScheme = animateColorScheme(targetScheme)
+
+    MaterialExpressiveTheme(
         colorScheme = colorScheme,
+        motionScheme = MotionScheme.expressive(),
         content = content
     )
 }
+
+@Composable
+private fun animatedColor(target: Color): Color {
+    val color by animateColorAsState(
+        targetValue = target,
+        animationSpec = tween(durationMillis = 320),
+        label = "schemeColor"
+    )
+    return color
+}
+
+@Composable
+private fun animateColorScheme(t: ColorScheme): ColorScheme = t.copy(
+    primary = animatedColor(t.primary),
+    onPrimary = animatedColor(t.onPrimary),
+    primaryContainer = animatedColor(t.primaryContainer),
+    onPrimaryContainer = animatedColor(t.onPrimaryContainer),
+    inversePrimary = animatedColor(t.inversePrimary),
+    secondary = animatedColor(t.secondary),
+    onSecondary = animatedColor(t.onSecondary),
+    secondaryContainer = animatedColor(t.secondaryContainer),
+    onSecondaryContainer = animatedColor(t.onSecondaryContainer),
+    tertiary = animatedColor(t.tertiary),
+    onTertiary = animatedColor(t.onTertiary),
+    tertiaryContainer = animatedColor(t.tertiaryContainer),
+    onTertiaryContainer = animatedColor(t.onTertiaryContainer),
+    background = animatedColor(t.background),
+    onBackground = animatedColor(t.onBackground),
+    surface = animatedColor(t.surface),
+    onSurface = animatedColor(t.onSurface),
+    surfaceVariant = animatedColor(t.surfaceVariant),
+    onSurfaceVariant = animatedColor(t.onSurfaceVariant),
+    surfaceTint = animatedColor(t.surfaceTint),
+    inverseSurface = animatedColor(t.inverseSurface),
+    inverseOnSurface = animatedColor(t.inverseOnSurface),
+    error = animatedColor(t.error),
+    onError = animatedColor(t.onError),
+    errorContainer = animatedColor(t.errorContainer),
+    onErrorContainer = animatedColor(t.onErrorContainer),
+    outline = animatedColor(t.outline),
+    outlineVariant = animatedColor(t.outlineVariant),
+    scrim = animatedColor(t.scrim),
+    surfaceBright = animatedColor(t.surfaceBright),
+    surfaceDim = animatedColor(t.surfaceDim),
+    surfaceContainer = animatedColor(t.surfaceContainer),
+    surfaceContainerHigh = animatedColor(t.surfaceContainerHigh),
+    surfaceContainerHighest = animatedColor(t.surfaceContainerHighest),
+    surfaceContainerLow = animatedColor(t.surfaceContainerLow),
+    surfaceContainerLowest = animatedColor(t.surfaceContainerLowest)
+)

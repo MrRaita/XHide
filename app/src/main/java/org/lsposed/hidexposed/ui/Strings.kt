@@ -115,7 +115,14 @@ data class AppStrings(
     val crashDetectedTitle: String,
     val crashDetectedDesc: String,
     val sendCrashReportBtn: String,
-    val dismissBtn: String
+    val dismissBtn: String,
+    val undoBtn: String,
+    val snackHiddenFmt: String,
+    val snackShownFmt: String,
+    val appActionInfo: String,
+    val appActionOpen: String,
+    val appActionCopy: String,
+    val packageCopiedToast: String
 )
 
 object Localization {
@@ -149,7 +156,7 @@ object Localization {
         navApps = "Uygulamalar",
         navSettings = "Ayarlar",
         refresh = "Yenile",
-        hookActiveTitle = "Sistem Hook Aktif",
+        hookActiveTitle = "Modül aktif",
         hookInactiveTitle = "Sistem Hook Bekleniyor",
         hookCheckingTitle = "Sistem Hook Kontrol Ediliyor...",
         hookActiveDesc = "LauncherAppsService bağlı · Tüm profillerde gerçek zamanlı filtreleme",
@@ -255,7 +262,14 @@ object Localization {
         crashDetectedTitle = "Beklenmedik Hata / Çökme Raporu",
         crashDetectedDesc = "Uygulama son oturumda beklenmedik bir hatayla karşılaştı. Hatanın çözülmesi için telefon bilgileriyle GitHub'a iletmek ister misiniz?",
         sendCrashReportBtn = "GitHub'a Rapor İlet",
-        dismissBtn = "Kapat"
+        dismissBtn = "Kapat",
+        undoBtn = "Geri al",
+        snackHiddenFmt = "%s gizlendi",
+        snackShownFmt = "%s görünür yapıldı",
+        appActionInfo = "Uygulama bilgisi",
+        appActionOpen = "Aç",
+        appActionCopy = "Paketi kopyala",
+        packageCopiedToast = "Paket adı kopyalandı"
     )
 
     private val EnStrings = AppStrings(
@@ -263,7 +277,7 @@ object Localization {
         navApps = "Apps",
         navSettings = "Settings",
         refresh = "Refresh",
-        hookActiveTitle = "System Hook Active",
+        hookActiveTitle = "Module active",
         hookInactiveTitle = "System Hook Inactive",
         hookCheckingTitle = "Checking System Hook...",
         hookActiveDesc = "LauncherAppsService hooked · Real-time multi-user icon filtering active",
@@ -369,7 +383,14 @@ object Localization {
         crashDetectedTitle = "Crash / Diagnostic Report",
         crashDetectedDesc = "An unexpected error occurred in the previous session. Would you like to report it to GitHub with device specs to help fix it?",
         sendCrashReportBtn = "Submit to GitHub",
-        dismissBtn = "Dismiss"
+        dismissBtn = "Dismiss",
+        undoBtn = "Undo",
+        snackHiddenFmt = "%s hidden",
+        snackShownFmt = "%s shown",
+        appActionInfo = "App info",
+        appActionOpen = "Open",
+        appActionCopy = "Copy package",
+        packageCopiedToast = "Package name copied"
     )
 
     private val DeStrings = AppStrings(
@@ -377,7 +398,7 @@ object Localization {
         navApps = "Apps",
         navSettings = "Optionen",
         refresh = "Neu laden",
-        hookActiveTitle = "System-Hook Aktiv",
+        hookActiveTitle = "Modul aktiv",
         hookInactiveTitle = "System-Hook Inaktiv",
         hookCheckingTitle = "System-Hook prüfen...",
         hookActiveDesc = "LauncherAppsService verbunden · Echtzeit-Filterung für alle Profile aktiv",
@@ -483,7 +504,14 @@ object Localization {
         crashDetectedTitle = "Absturz- / Diagnosebericht",
         crashDetectedDesc = "In der letzten Sitzung ist ein unerwarteter Fehler aufgetreten. Möchtest du ihn an GitHub melden?",
         sendCrashReportBtn = "An GitHub senden",
-        dismissBtn = "Schließen"
+        dismissBtn = "Schließen",
+        undoBtn = "Rückgängig",
+        snackHiddenFmt = "%s ausgeblendet",
+        snackShownFmt = "%s eingeblendet",
+        appActionInfo = "App-Info",
+        appActionOpen = "Öffnen",
+        appActionCopy = "Paket kopieren",
+        packageCopiedToast = "Paketname kopiert"
     )
 
     private val RuStrings = AppStrings(
@@ -491,7 +519,7 @@ object Localization {
         navApps = "Приложения",
         navSettings = "Настройки",
         refresh = "Обновить",
-        hookActiveTitle = "Системный хук активен",
+        hookActiveTitle = "Модуль активен",
         hookInactiveTitle = "Системный хук неактивен",
         hookCheckingTitle = "Проверка системного хука...",
         hookActiveDesc = "LauncherAppsService подключен · Фильтрация во всех профилях активна",
@@ -597,7 +625,14 @@ object Localization {
         crashDetectedTitle = "Отчёт об ошибке / сбое",
         crashDetectedDesc = "В предыдущем сеансе произошла непредвиденная ошибка. Хотите отправить отчёт на GitHub с параметрами устройства?",
         sendCrashReportBtn = "Отправить на GitHub",
-        dismissBtn = "Закрыть"
+        dismissBtn = "Закрыть",
+        undoBtn = "Отменить",
+        snackHiddenFmt = "%s скрыто",
+        snackShownFmt = "%s показано",
+        appActionInfo = "О приложении",
+        appActionOpen = "Открыть",
+        appActionCopy = "Копировать пакет",
+        packageCopiedToast = "Имя пакета скопировано"
     )
 
     private val ZhStrings = AppStrings(
@@ -605,7 +640,7 @@ object Localization {
         navApps = "应用",
         navSettings = "设置",
         refresh = "刷新",
-        hookActiveTitle = "系统 Hook 已激活",
+        hookActiveTitle = "模块已激活",
         hookInactiveTitle = "系统 Hook 未激活",
         hookCheckingTitle = "正在检查系统 Hook...",
         hookActiveDesc = "已连接 LauncherAppsService · 多用户实时图标过滤已启用",
@@ -711,6 +746,13 @@ object Localization {
         crashDetectedTitle = "意外崩溃 / 诊断报告",
         crashDetectedDesc = "应用在上次会话中遇到意外错误。是否要将附带设备信息的报告提交到 GitHub 以便修复？",
         sendCrashReportBtn = "提交至 GitHub",
-        dismissBtn = "关闭"
+        dismissBtn = "关闭",
+        undoBtn = "撤销",
+        snackHiddenFmt = "已隐藏 %s",
+        snackShownFmt = "已显示 %s",
+        appActionInfo = "应用信息",
+        appActionOpen = "打开",
+        appActionCopy = "复制包名",
+        packageCopiedToast = "包名已复制"
     )
 }
