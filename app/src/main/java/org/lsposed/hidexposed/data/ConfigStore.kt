@@ -126,8 +126,11 @@ object ConfigStore {
     var showSystemApps: Boolean = true
         private set
 
+    /** Out-of-the-box UI scale (user can still change it in Settings). */
+    const val DEFAULT_UI_SCALE = 1.0f
+
     @Volatile
-    var uiScale: Float = 1.0f
+    var uiScale: Float = DEFAULT_UI_SCALE
         private set
 
     @Volatile
@@ -308,12 +311,14 @@ object ConfigStore {
 
     fun loadUiPrefs(context: Context) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        appLanguage = prefs.getString("appLanguage", "SYSTEM") ?: "SYSTEM"
+        // Android 13+ manages the app language in system settings.
+        appLanguage = if (android.os.Build.VERSION.SDK_INT >= 33) "SYSTEM"
+            else prefs.getString("appLanguage", "SYSTEM") ?: "SYSTEM"
         themeMode = prefs.getString("themeMode", "SYSTEM") ?: "SYSTEM"
         amoledBlack = prefs.getBoolean("amoledBlack", true)
         dynamicColor = prefs.getBoolean("dynamicColor", true)
         showSystemApps = prefs.getBoolean("showSystemApps", true)
-        uiScale = prefs.getFloat("uiScale", 1.0f).coerceIn(0.90f, 1.50f)
+        uiScale = prefs.getFloat("uiScale", DEFAULT_UI_SCALE).coerceIn(0.90f, 1.50f)
         appSortMode = AppSortMode.fromCode(prefs.getString("appSortMode", "NAME_ASC"))
 
         val rawBl = prefs.getStringSet("blacklist", emptySet()) ?: emptySet()
