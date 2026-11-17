@@ -76,6 +76,11 @@ fun HookStatusBadge(
             progress.snapTo(0f)
             progress.animateTo(1f, tween(520, easing = FastOutSlowInEasing))
             shown = state
+        } else if (progress.value < 1f) {
+            // Interrupted morph and the state returned to the shape being shown: reverse it.
+            progress.animateTo(0f, tween(260, easing = FastOutSlowInEasing))
+            morph = Morph(polygonFor(shown), polygonFor(shown))
+            progress.snapTo(1f)
         }
     }
 

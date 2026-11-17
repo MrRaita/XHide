@@ -1,5 +1,8 @@
 package org.lsposed.hidexposed.ui.components
 
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -142,7 +145,13 @@ fun <T> SortMenuButton(
                                 modifier = Modifier.size(20.dp)
                             )
                         }
-                        Column(modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp)) {
+                        val screenH = LocalConfiguration.current.screenHeightDp
+                        Column(
+                            modifier = Modifier
+                                .heightIn(max = (screenH - 160).coerceAtLeast(120).dp)
+                                .verticalScroll(rememberScrollState())
+                                .padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
+                        ) {
                         options.forEachIndexed { index, (value, label) ->
                             val isSelected = value == selected
                             Row(

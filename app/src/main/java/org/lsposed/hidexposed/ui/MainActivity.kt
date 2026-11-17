@@ -1,5 +1,8 @@
 package org.lsposed.hidexposed.ui
 
+import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.semantics.semantics
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -317,13 +320,15 @@ class MainActivity : ComponentActivity() {
         val saved = prefs.getString("appLanguage", "SYSTEM") ?: "SYSTEM"
         if (saved == "SYSTEM") return
         try {
-            val lm = getSystemService(android.app.LocaleManager::class.java)
-            if (lm != null && lm.applicationLocales.isEmpty) {
+            val lm = getSystemService(android.app.LocaleManager::class.java) ?: return
+            if (lm.applicationLocales.isEmpty) {
                 lm.applicationLocales = android.os.LocaleList.forLanguageTags(saved.lowercase())
             }
+            // Reached only if the system locale was set or already existed; otherwise the old
+            // choice is kept and the migration is retried on the next launch.
+            prefs.edit().putString("appLanguage", "SYSTEM").apply()
         } catch (_: Throwable) {
         }
-        prefs.edit().putString("appLanguage", "SYSTEM").apply()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -2196,7 +2201,7 @@ private fun AppItemRow(
         color = rowColor
     ) {
         Column(
-            modifier = Modifier.combinedClickable(
+            modifier = Modifier.semantics { toggleableState = ToggleableState(isHidden) }.combinedClickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
                 role = Role.Switch,
@@ -2588,12 +2593,35 @@ private fun SettingsTabScreen(
                                             .clip(RoundedCornerShape(10.dp))
                                             .clickable {
                                                 showLangDialog = false
-                                                onUpdateAppearance(code, themeMode, amoledBlack, dynamicColor, uiScale)
+                                                if (newSystemPicker) {
+                                                    try {
+                                                        context.getSystemService(android.app.LocaleManager::class.java)
+                                                            ?.applicationLocales = if (code == "SYSTEM") {
+                                                            android.os.LocaleList.getEmptyLocaleList()
+                                                        } else {
+                                                            android.os.LocaleList.forLanguageTags(code.lowercase())
+                                                        }
+                                                    } catch (_: Throwable) {
+                                                    }
+                                                } else {
+                                                    onUpdateAppearance(code, themeMode, amoledBlack, dynamicColor, uiScale)
+                                                }
                                             }
                                             .padding(vertical = 6.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        RadioButton(selected = langCode == code, onClick = null)
+                                        val selectedLang = if (newSystemPicker) {
+                                            val first = java.util.Locale.getDefault().language
+                                            if (code == "SYSTEM") {
+                                                context.getSystemService(android.app.LocaleManager::class.java)
+                                                    ?.applicationLocales?.isEmpty != false
+                                            } else {
+                                                code.lowercase() == first
+                                            }
+                                        } else {
+                                            langCode == code
+                                        }
+                                        RadioButton(selected = selectedLang, onClick = null)
                                         Spacer(modifier = Modifier.width(12.dp))
                                         Text(
                                             text = if (code == "SYSTEM") strings.languageSystem else displayName,
