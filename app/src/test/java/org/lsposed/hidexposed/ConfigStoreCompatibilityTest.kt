@@ -217,4 +217,16 @@ class ConfigStoreCompatibilityTest {
         assertNotNull(sharedJson)
         assertTrue(sharedJson!!.contains("0:com.shared.app"))
     }
+
+    @Test
+    fun configWorkerPreparationStopsThreadAndResumes() {
+        val payload = JSONObject().apply {
+            put("autoHide", false)
+            put("blacklist", JSONArray(listOf("0:com.test.worker")))
+        }.toString()
+        assertNotNull(ConfigStore.applySystemIpcUpdate(payload))
+
+        assertTrue(ConfigStore.prepareForHotReload())
+        ConfigStore.resumeAfterHotReload()
+    }
 }

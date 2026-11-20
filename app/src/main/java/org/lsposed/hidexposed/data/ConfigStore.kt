@@ -151,6 +151,9 @@ object ConfigStore {
 
     private const val RELOAD_THROTTLE_NANOS = 250_000_000L // 250 ms
 
+    @Volatile
+    private var publicationRevision: Long = 0L
+
     internal const val SHARED_RULES_JSON_KEY = "org.lsposed.hidexposed.active_rules_json"
 
     private fun publishSharedRules(snapshot: HideRules) {
@@ -164,8 +167,12 @@ object ConfigStore {
         try {
             val sharedJson = System.getProperties()[SHARED_RULES_JSON_KEY] as? String ?: return
             val decoded = decodeSystemConfig(sharedJson) ?: return
-            if (decoded != rules) {
-                rules = decoded
+            if (decoded == rules) return
+            synchronized(this) {
+                val currentShared = System.getProperties()[SHARED_RULES_JSON_KEY] as? String
+                if (currentShared == sharedJson && decoded != rules) {
+                    rules = decoded
+                }
             }
         } catch (_: Throwable) {
         }
@@ -173,6 +180,9 @@ object ConfigStore {
 
     @Volatile
     private var backgroundWorkerRunning = false
+
+    @Volatile
+    private var backgroundWorkerThread: Thread? = null
 
     private fun startBackgroundWorkerLocked() {
         if (backgroundWorkerRunning) return
@@ -191,6 +201,7 @@ object ConfigStore {
             isDaemon = true
             priority = Thread.MIN_PRIORITY
         }
+        backgroundWorkerThread = thread
         thread.start()
     }
 
@@ -202,6 +213,7 @@ object ConfigStore {
         val mtime = file.lastModified()
         if (mtime == 0L || mtime == lastLoadedMtime) return
 
+        val revisionBeforeRead = publicationRevision
         val newRules = try {
             if (!file.canRead() || file.length() > MAX_IPC_PAYLOAD_CHARS) return
             parseRules(JSONObject(file.readText()))
@@ -210,13 +222,43 @@ object ConfigStore {
         }
 
         synchronized(this) {
-            if (mtime != lastLoadedMtime) {
+            if (revisionBeforeRead == publicationRevision && mtime != lastLoadedMtime) {
                 rules = newRules
                 lastLoadedPath = currentPath
                 lastLoadedMtime = mtime
                 lastMtimeCheckNanos = System.nanoTime()
                 initializedInSystem = true
                 publishSharedRules(newRules)
+            }
+        }
+    }
+
+    fun prepareForHotReload(): Boolean {
+        synchronized(this) {
+            backgroundWorkerRunning = false
+        }
+        val thread = backgroundWorkerThread
+        if (thread != null && thread !== Thread.currentThread()) {
+            thread.interrupt()
+            try {
+                thread.join(500)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+            if (thread.isAlive) {
+                return false
+            }
+        }
+        synchronized(this) {
+            backgroundWorkerThread = null
+        }
+        return true
+    }
+
+    fun resumeAfterHotReload() {
+        synchronized(this) {
+            if (initializedInSystem) {
+                startBackgroundWorkerLocked()
             }
         }
     }
@@ -345,6 +387,7 @@ object ConfigStore {
             lastLoadedMtime = writtenMtime
             lastMtimeCheckNanos = System.nanoTime()
             initializedInSystem = true
+            publicationRevision++
             publishSharedRules(newRules)
             startBackgroundWorkerLocked()
 

@@ -109,6 +109,7 @@ internal object ModernHotReload102 {
                 fallbackHandles.values.forEach { runCatching { it.unhook() } }
                 module.log(android.util.Log.WARN, "XHide", "Retaining existing hooks to preserve privacy enforcement after recovery failure")
                 // Resume old generation's lifecycle state so retained callbacks do not reject self-IPC
+                System.getProperties().remove(LauncherHook.RETIRER_KEY)
                 (System.getProperties().remove(LauncherHook.RESUMER_KEY) as? Runnable)?.run()
             }
         } finally {

@@ -20,6 +20,7 @@ import org.lsposed.hidexposed.data.ConfigStore
 import java.security.MessageDigest
 import java.util.ArrayList
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
@@ -110,14 +111,14 @@ object LauncherHook {
     private val lifecycleLock = Any()
     private var lastKnownContext: Context? = null
     internal const val RESUMER_KEY = "org.lsposed.hidexposed.lifecycle_resumer"
-    private const val RELOAD_ABORT_TIMEOUT_MS = 10_000L
+    internal const val RETIRER_KEY = "org.lsposed.hidexposed.lifecycle_retirer"
+    private const val RELOAD_TIMEOUT_NANOS = 5_000_000_000L // 5 seconds
+
+    @Volatile
+    private var reloadStartTimeNanos: Long = 0L
 
     private var reloadWatchdogTask: ScheduledFuture<*>? = null
-    private val reloadWatchdogExecutor by lazy {
-        Executors.newSingleThreadScheduledExecutor { r ->
-            Thread(r, "XHide-ReloadWatchdog").apply { isDaemon = true }
-        }
-    }
+    private var reloadWatchdogExecutor: ScheduledExecutorService? = null
 
     internal fun updateBackend(hookBackend: HookBackend) {
         synchronized(lifecycleLock) {
@@ -125,13 +126,35 @@ object LauncherHook {
         }
     }
 
+    private fun isReloadPending(): Boolean {
+        if (!acceptingReload) return false
+        val elapsed = System.nanoTime() - reloadStartTimeNanos
+        if (elapsed > RELOAD_TIMEOUT_NANOS) {
+            synchronized(lifecycleLock) {
+                if (acceptingReload && (System.nanoTime() - reloadStartTimeNanos > RELOAD_TIMEOUT_NANOS)) {
+                    backend.log("[$TAG] Hot reload preparation timed out without completion; framework aborted reload, restoring lifecycle")
+                    System.getProperties().remove(RESUMER_KEY)
+                    System.getProperties().remove(RETIRER_KEY)
+                    resumeLocked()
+                }
+            }
+            return false
+        }
+        return true
+    }
+
     fun prepareForHotReload(): Boolean {
         synchronized(lifecycleLock) {
             acceptingReload = true
+            reloadStartTimeNanos = System.nanoTime()
             val resumer = Runnable {
                 synchronized(lifecycleLock) { resumeLocked() }
             }
+            val retirer = Runnable {
+                synchronized(lifecycleLock) { retireLocked() }
+            }
             System.getProperties()[RESUMER_KEY] = resumer
+            System.getProperties()[RETIRER_KEY] = retirer
             synchronized(selfCacheLock) {
                 selfCacheGeneration++
                 cachedSelfAppId = -1
@@ -147,48 +170,60 @@ object LauncherHook {
         }
         synchronized(lifecycleLock) {
             stopWatcherLocked()
-            val prepared = ModuleCache.prepareForHotReload()
-            if (!prepared) {
+            val cachePrepared = ModuleCache.prepareForHotReload()
+            val configPrepared = ConfigStore.prepareForHotReload()
+            if (!cachePrepared || !configPrepared) {
+                if (cachePrepared) ModuleCache.resumeAfterHotReload()
+                if (configPrepared) ConfigStore.resumeAfterHotReload()
                 resumeLocked()
                 return false
             }
-            scheduleReloadWatchdogLocked()
+            // Module-owned executor is stopped before preparation returns true
+            reloadWatchdogTask?.cancel(false)
+            reloadWatchdogTask = null
+            try {
+                reloadWatchdogExecutor?.shutdownNow()
+            } catch (_: Throwable) {
+            }
+            reloadWatchdogExecutor = null
             return true
-        }
-    }
-
-    private fun scheduleReloadWatchdogLocked() {
-        reloadWatchdogTask?.cancel(false)
-        val currentResumer = System.getProperties()[RESUMER_KEY] as? Runnable ?: return
-        try {
-            reloadWatchdogTask = reloadWatchdogExecutor.schedule({
-                synchronized(lifecycleLock) {
-                    if (acceptingReload && System.getProperties()[RESUMER_KEY] === currentResumer) {
-                        backend.log("[$TAG] Hot reload preparation timed out without completion; framework aborted reload, restoring lifecycle")
-                        System.getProperties().remove(RESUMER_KEY)
-                        resumeLocked()
-                    }
-                }
-            }, RELOAD_ABORT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-        } catch (t: Throwable) {
-            backend.log("[$TAG] Could not schedule reload watchdog: ${t.message}")
         }
     }
 
     fun resumeAfterHotReload() {
         System.getProperties().remove(RESUMER_KEY)
+        (System.getProperties().remove(RETIRER_KEY) as? Runnable)?.run()
         synchronized(lifecycleLock) { resumeLocked() }
+    }
+
+    private fun retireLocked() {
+        acceptingReload = false
+        reloadWatchdogTask?.cancel(false)
+        reloadWatchdogTask = null
+        try {
+            reloadWatchdogExecutor?.shutdownNow()
+        } catch (_: Throwable) {
+        }
+        reloadWatchdogExecutor = null
+        stopWatcherLocked()
+        ConfigStore.prepareForHotReload()
     }
 
     private fun resumeLocked() {
         reloadWatchdogTask?.cancel(false)
         reloadWatchdogTask = null
+        try {
+            reloadWatchdogExecutor?.shutdownNow()
+        } catch (_: Throwable) {
+        }
+        reloadWatchdogExecutor = null
         acceptingReload = false
         synchronized(selfCacheLock) {
             selfCacheGeneration++
             cachedSelfAppId = -1
         }
         ModuleCache.resumeAfterHotReload()
+        ConfigStore.resumeAfterHotReload()
         val context = lastKnownContext
         if (context != null) {
             scheduleSelfPackageWatcher(context)
@@ -981,7 +1016,7 @@ object LauncherHook {
     }
 
     private fun isCallerSelf(callingUid: Int, serviceObject: Any?): Boolean {
-        if (acceptingReload) return false
+        if (isReloadPending()) return false
         val appId = callingUid % PER_USER_RANGE
         if (appId < Process.FIRST_APPLICATION_UID) return false
         val cached = cachedSelfAppId
@@ -1014,7 +1049,7 @@ object LauncherHook {
             // inherit IPC and cross-profile privileges.
             if (watcherReadyAtStart) {
                 synchronized(selfCacheLock) {
-                    if (selfCacheGeneration == generationAtStart && !acceptingReload && selfWatcherAllUsers) {
+                    if (selfCacheGeneration == generationAtStart && !isReloadPending() && selfWatcherAllUsers) {
                         cachedSelfAppId = appId
                     }
                 }
@@ -1034,14 +1069,14 @@ object LauncherHook {
 
     /** Registers the package watcher on a background thread, at most once at a time. */
     private fun scheduleSelfPackageWatcher(context: Context) {
-        if (acceptingReload) return
+        if (isReloadPending()) return
         if (selfWatcherRegistered) return
         if (!selfWatcherScheduled.compareAndSet(false, true)) return
         try {
             val thread = Thread({
                 val token = Binder.clearCallingIdentity()
                 try {
-                    if (!acceptingReload) ensureSelfPackageWatcher(context)
+                    if (!isReloadPending()) ensureSelfPackageWatcher(context)
                 } catch (t: Throwable) {
                     backend.log("[$TAG] Self package watcher registration failed: ${t.message}")
                 } finally {
@@ -1073,7 +1108,7 @@ object LauncherHook {
     private fun ensureSelfPackageWatcher(context: Context): Boolean {
         lastKnownContext = context
         if (selfWatcherRegistered) return selfWatcherAllUsers
-        if (acceptingReload) return false
+        if (isReloadPending()) return false
         val filter = android.content.IntentFilter().apply {
             addAction(Intent.ACTION_PACKAGE_REMOVED)
             addAction(Intent.ACTION_PACKAGE_FULLY_REMOVED)
@@ -1093,7 +1128,7 @@ object LauncherHook {
             }
         }
         selfWatcherRegistered = synchronized(lifecycleLock) {
-            if (acceptingReload) return false
+            if (isReloadPending()) return false
             var registered = false
             try {
                 val allUsers = backend.getStaticObjectField(UserHandle::class.java, "ALL") as UserHandle
@@ -1111,7 +1146,7 @@ object LauncherHook {
                     backend.log("[$TAG] Could not register self package watcher: ${t2.message}")
                 }
             }
-            if (registered && !acceptingReload) {
+            if (registered && !isReloadPending()) {
                 watcherContext = context
                 watcherReceiver = receiver
                 true
