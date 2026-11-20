@@ -147,6 +147,7 @@ object ModuleCache {
     }
 
     private fun persistNow() {
+        if (!persistedLoaded) return
         synchronized(persistLock) {
             try {
                 val snapshot = synchronized(apkModuleCache) { LinkedHashMap(apkModuleCache) }

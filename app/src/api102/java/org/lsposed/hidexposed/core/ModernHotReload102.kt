@@ -29,6 +29,7 @@ internal object ModernHotReload102 {
 
     fun onHotReloaded(module: ModernModule, param: XposedModuleInterface.HotReloadedParam) {
         val handles = param.oldHookHandles.associateBy { it.executable }.toMutableMap()
+        val newHandles = mutableListOf<HookHandle>()
         try {
             module.log(android.util.Log.INFO, "XHide", "[API 102] onHotReloaded triggered in process: ${param.processName} (isSystemServer=${param.isSystemServer})")
             if (!param.isSystemServer || !isSupported(module)) {
@@ -54,7 +55,10 @@ internal object ModernHotReload102 {
                             .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
                             .intercept { chain -> invokeHookCallback(chain, callback) }
                     }
-                    return ReloadedHandle(replacement).also { registerHook(it) }
+                    return ReloadedHandle(replacement).also {
+                        registerHook(it)
+                        newHandles.add(it)
+                    }
                 }
             }
             val classLoader = param.oldHookHandles.firstOrNull()?.executable?.declaringClass?.classLoader
@@ -64,6 +68,7 @@ internal object ModernHotReload102 {
             module.log(android.util.Log.INFO, "XHide", "[API 102] Successfully replaced and restored hooks via replaceHook")
         } catch (t: Throwable) {
             module.log(android.util.Log.ERROR, "XHide", "Hot reload hook restoration failed", t)
+            newHandles.forEach { runCatching { it.unhook() } }
             handles.values.forEach { runCatching { it.unhook() } }
             // Reinstalling with the API 101 backend is safer than leaving partial hooks behind.
             runCatching { module.reinstallAfterHotReload() }
