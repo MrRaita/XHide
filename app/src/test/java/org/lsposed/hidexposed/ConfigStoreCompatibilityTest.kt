@@ -176,4 +176,31 @@ class ConfigStoreCompatibilityTest {
         assertTrue(ConfigStore.classifyConfigReply(false, null) { true } is ConfigStore.ConfigRead.Failed)
         assertTrue(ConfigStore.classifyConfigReply(false, "{bad") { true } is ConfigStore.ConfigRead.Failed)
     }
+
+    @Test
+    fun externalFileUpdateIsReloadedByEnsureSystemLoaded() {
+        val initialPayload = JSONObject().apply {
+            put("autoHide", false)
+            put("blacklist", JSONArray(listOf("0:com.pkg1")))
+        }.toString()
+        assertNotNull(ConfigStore.applySystemIpcUpdate(initialPayload))
+        assertTrue(ConfigStore.shouldHidePackage("com.pkg1", 0, false))
+        assertFalse(ConfigStore.shouldHidePackage("com.pkg2", 0, false))
+
+        // Simulate an external update (e.g. from another generation) modifying the file on disk:
+        val updatedPayload = JSONObject().apply {
+            put("autoHide", false)
+            put("blacklist", JSONArray(listOf("0:com.pkg1", "0:com.pkg2")))
+            put("whitelist", JSONArray(listOf("0:org.lsposed.hidexposed")))
+        }.toString()
+        val file = java.io.File(ConfigStore.systemConfigPath)
+        file.writeText(updatedPayload)
+        file.setLastModified(System.currentTimeMillis() + 1000)
+
+        // Wait past throttle window
+        Thread.sleep(300)
+
+        // shouldHidePackage detects the modified file and reloads com.pkg2 as hidden
+        assertTrue(ConfigStore.shouldHidePackage("com.pkg2", 0, false))
+    }
 }

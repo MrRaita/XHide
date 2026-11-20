@@ -140,14 +140,32 @@ object ConfigStore {
     @Volatile
     private var initializedInSystem = false
 
+    @Volatile
+    private var lastLoadedPath: String? = null
+
+    @Volatile
+    private var lastLoadedMtime: Long = -1L
+
+    @Volatile
+    private var lastMtimeCheckMs: Long = 0L
+
     fun userKey(userId: Int, packageName: String): String = "$userId:$packageName"
 
     fun ensureSystemLoaded() {
-        if (initializedInSystem) return
+        val now = System.currentTimeMillis()
+        val currentPath = systemConfigPath
+        if (initializedInSystem && currentPath == lastLoadedPath && (now - lastMtimeCheckMs < 250L)) return
         synchronized(this) {
-            if (initializedInSystem) return
-            loadFromSystemFile()
-            initializedInSystem = true
+            if (initializedInSystem && currentPath == lastLoadedPath && (now - lastMtimeCheckMs < 250L)) return
+            lastMtimeCheckMs = now
+            val file = File(currentPath)
+            val mtime = if (file.isFile) file.lastModified() else 0L
+            if (!initializedInSystem || currentPath != lastLoadedPath || mtime != lastLoadedMtime) {
+                loadFromSystemFile()
+                lastLoadedPath = currentPath
+                lastLoadedMtime = mtime
+                initializedInSystem = true
+            }
         }
     }
 
@@ -247,6 +265,9 @@ object ConfigStore {
 
             // Zero-race atomic reference swap: concurrent Binder threads never see a partial update
             rules = newRules
+            lastLoadedPath = systemConfigPath
+            lastLoadedMtime = File(systemConfigPath).lastModified()
+            lastMtimeCheckMs = System.currentTimeMillis()
             initializedInSystem = true
 
             val changed = mutableSetOf<String>()
