@@ -64,33 +64,38 @@ object ModuleCache {
     private fun resumeExecutor() {
         synchronized(lifecycleLock) {
             acceptingReload = false
-            if (persistExecutor.isTerminated) persistExecutor = newPersistExecutor()
+            if (persistExecutor.isShutdown) persistExecutor = newPersistExecutor()
         }
+        persistScheduled.set(false)
     }
 
     fun prepareForHotReload(): Boolean {
+        val executor: ScheduledExecutorService
         synchronized(lifecycleLock) {
             acceptingReload = true
-            persistNow()
-            val executor = persistExecutor
-            executor.shutdownNow()
-            try {
-                if (!executor.awaitTermination(500, TimeUnit.MILLISECONDS)) {
-                    resumeExecutor()
-                    return false
-                }
-            } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
+            executor = persistExecutor
+        }
+        persistScheduled.set(false)
+        persistNow()
+        executor.shutdownNow()
+        try {
+            if (!executor.awaitTermination(500, TimeUnit.MILLISECONDS)) {
                 resumeExecutor()
                 return false
             }
-            return true
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            resumeExecutor()
+            return false
         }
+        return true
     }
 
     private fun ensureInitialized(hookBackend: HookBackend) {
-        synchronized(lifecycleLock) {
-            if (backend == null) backend = hookBackend
+        if (backend == null) {
+            synchronized(lifecycleLock) {
+                if (backend == null) backend = hookBackend
+            }
         }
     }
 
@@ -128,12 +133,8 @@ object ModuleCache {
 
     private fun schedulePersist() {
         if (!isSystemServer()) return
+        if (acceptingReload) return
         if (!persistScheduled.compareAndSet(false, true)) return
-        if (acceptingReload) {
-            persistScheduled.set(false)
-            persistNow()
-            return
-        }
         try {
             persistExecutor.schedule({
                 persistScheduled.set(false)
@@ -146,15 +147,17 @@ object ModuleCache {
     }
 
     private fun persistNow() {
-        try {
-            val snapshot = synchronized(apkModuleCache) { LinkedHashMap(apkModuleCache) }
-            // Drop verdicts for APKs that no longer exist (uninstalled or replaced packages).
-            val live = snapshot.filterKeys { File(ModuleCacheFile.sourceDirOf(it)).exists() }
-            val bytes = ModuleCacheFile.encode(live, ModuleCacheFile.DETECTION_RULES_VERSION).toByteArray(Charsets.UTF_8)
-            if (bytes.size > ModuleCacheFile.MAX_FILE_BYTES) return
-            DurableFiles.writeAtomically(ModuleCacheFile.PATH, bytes)
-        } catch (t: Throwable) {
-            backend?.log("[$TAG] Could not persist module cache: ${t.message}")
+        synchronized(persistLock) {
+            try {
+                val snapshot = synchronized(apkModuleCache) { LinkedHashMap(apkModuleCache) }
+                // Drop verdicts for APKs that no longer exist (uninstalled or replaced packages).
+                val live = snapshot.filterKeys { File(ModuleCacheFile.sourceDirOf(it)).exists() }
+                val bytes = ModuleCacheFile.encode(live, ModuleCacheFile.DETECTION_RULES_VERSION).toByteArray(Charsets.UTF_8)
+                if (bytes.size > ModuleCacheFile.MAX_FILE_BYTES) return
+                DurableFiles.writeAtomically(ModuleCacheFile.PATH, bytes)
+            } catch (t: Throwable) {
+                backend?.log("[$TAG] Could not persist module cache: ${t.message}")
+            }
         }
     }
 

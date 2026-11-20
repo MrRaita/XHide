@@ -28,6 +28,7 @@ internal object ModernHotReload102 {
     }
 
     fun onHotReloaded(module: ModernModule, param: XposedModuleInterface.HotReloadedParam) {
+        val handles = param.oldHookHandles.associateBy { it.executable }.toMutableMap()
         try {
             module.log(android.util.Log.INFO, "XHide", "[API 102] onHotReloaded triggered in process: ${param.processName} (isSystemServer=${param.isSystemServer})")
             if (!param.isSystemServer || !isSupported(module)) {
@@ -35,7 +36,6 @@ internal object ModernHotReload102 {
                 return
             }
 
-            val handles = param.oldHookHandles.associateBy { it.executable }.toMutableMap()
             val replacementBackend = object : HookBackend by ModernHookBackend(module, mutableMapOf()) {
                 override fun findAndHookMethod(
                     clazz: Class<*>,
@@ -44,9 +44,11 @@ internal object ModernHotReload102 {
                     callback: HookCallback
                 ): HookHandle {
                     val method = clazz.getDeclaredMethod(methodName, *parameterTypes)
-                    val old = handles.remove(method)
+                    val old = handles[method]
                     val replacement = if (old != null) {
-                        old.replaceHook { chain -> invokeHookCallback(chain, callback) }
+                        val replaced = old.replaceHook { chain -> invokeHookCallback(chain, callback) }
+                        handles.remove(method)
+                        replaced
                     } else {
                         module.hook(method)
                             .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
@@ -62,6 +64,7 @@ internal object ModernHotReload102 {
             module.log(android.util.Log.INFO, "XHide", "[API 102] Successfully replaced and restored hooks via replaceHook")
         } catch (t: Throwable) {
             module.log(android.util.Log.ERROR, "XHide", "Hot reload hook restoration failed", t)
+            handles.values.forEach { runCatching { it.unhook() } }
             // Reinstalling with the API 101 backend is safer than leaving partial hooks behind.
             runCatching { module.reinstallAfterHotReload() }
                 .onFailure { module.log(android.util.Log.ERROR, "XHide", "Fallback installation failed", it) }

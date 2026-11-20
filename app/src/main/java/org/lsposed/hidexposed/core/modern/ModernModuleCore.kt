@@ -17,7 +17,11 @@ abstract class ModernModuleCore : XposedModule() {
 
     override fun onSystemServerStarting(param: XposedModuleInterface.SystemServerStartingParam) {
         systemServerClassLoader = param.classLoader
-        LauncherHook.install(param.classLoader, ModernHookBackend(this, LinkedHashMap()))
+        try {
+            LauncherHook.install(param.classLoader, ModernHookBackend(this, LinkedHashMap()))
+        } catch (t: Throwable) {
+            log(android.util.Log.ERROR, "XHide", "Failed to install LauncherHook on startup", t)
+        }
     }
 
     protected open fun initializeOptionalLayer(module: ModernModuleCore) = Unit

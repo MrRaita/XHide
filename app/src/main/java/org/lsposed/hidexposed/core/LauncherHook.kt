@@ -70,10 +70,7 @@ object LauncherHook {
         cachedSelfAppId = -1
         try {
             val clazz = backend.findClassIfExists(TARGET_CLASS, classLoader)
-            if (clazz == null) {
-                backend.log("[$TAG] Target class not found: $TARGET_CLASS")
-                return
-            }
+                ?: error("Target class not found: $TARGET_CLASS")
 
             runCatching { hookGetUserProfiles(clazz) }
                 .onFailure { backend.log("[$TAG] hookGetUserProfiles failed: ${it.message}") }
@@ -81,8 +78,7 @@ object LauncherHook {
                 .onFailure { backend.log("[$TAG] hookUserManagerGetProfileIds failed: ${it.message}") }
             runCatching { hookProfileAccessChecks(clazz) }
                 .onFailure { backend.log("[$TAG] hookProfileAccessChecks failed: ${it.message}") }
-            runCatching { hookGetLauncherActivities(clazz) }
-                .onFailure { backend.log("[$TAG] hookGetLauncherActivities failed: ${it.message}") }
+            hookGetLauncherActivities(clazz)
             runCatching { hookGetShortcuts(clazz) }
                 .onFailure { backend.log("[$TAG] hookGetShortcuts failed: ${it.message}") }
             runCatching { hookResolveAndEnabledChecks(clazz) }
@@ -91,6 +87,7 @@ object LauncherHook {
             backend.log("[$TAG] Successfully installed system hooks on $TARGET_CLASS (Android 11–17)")
         } catch (t: Throwable) {
             backend.log("[$TAG] Failed to install LauncherHook: ${t.message}")
+            throw t
         }
     }
 
@@ -101,7 +98,20 @@ object LauncherHook {
     fun prepareForHotReload(): Boolean {
         synchronized(lifecycleLock) {
             acceptingReload = true
-            cachedSelfAppId = -1
+            synchronized(selfCacheLock) {
+                selfCacheGeneration++
+                cachedSelfAppId = -1
+            }
+        }
+        val thread = watcherThread
+        if (thread != null && thread !== Thread.currentThread()) {
+            try {
+                thread.join(500)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
+        synchronized(lifecycleLock) {
             stopWatcherLocked()
             val prepared = ModuleCache.prepareForHotReload()
             if (!prepared) resumeLocked()
@@ -123,16 +133,7 @@ object LauncherHook {
     }
 
     private fun stopWatcherLocked() {
-        val context = watcherContext
-        val receiver = watcherReceiver
         val thread = watcherThread
-        if (context != null && receiver != null) {
-            try {
-                context.unregisterReceiver(receiver)
-            } catch (_: Throwable) {
-                // Already unregistered: this is the desired shutdown state.
-            }
-        }
         if (thread != null && thread !== Thread.currentThread()) {
             try {
                 thread.join(500)
@@ -142,6 +143,15 @@ object LauncherHook {
         }
         if (thread?.isAlive == true) {
             backend.log("[$TAG] Watcher thread did not stop before hot reload")
+        }
+        val context = watcherContext
+        val receiver = watcherReceiver
+        if (context != null && receiver != null) {
+            try {
+                context.unregisterReceiver(receiver)
+            } catch (_: Throwable) {
+                // Already unregistered: this is the desired shutdown state.
+            }
         }
         watcherThread = null
         watcherContext = null
@@ -1013,34 +1023,36 @@ object LauncherHook {
                 backend.log("[$TAG] Companion package changed (${intent.action}); self-caller cache invalidated")
             }
         }
-        selfWatcherRegistered = run {
-            synchronized(lifecycleLock) {
-                if (acceptingReload) return false
-                watcherContext = context
-                watcherReceiver = receiver
-            }
+        selfWatcherRegistered = synchronized(lifecycleLock) {
+            if (acceptingReload) return false
+            var registered = false
             try {
                 val allUsers = backend.getStaticObjectField(UserHandle::class.java, "ALL") as UserHandle
                 backend.callMethod(context, "registerReceiverAsUser", receiver, allUsers, filter, null, null)
                 selfWatcherAllUsers = true
-                true
+                registered = true
             } catch (t: Throwable) {
                 backend.log("[$TAG] registerReceiverAsUser failed, falling back: ${t.message}")
                 try {
                     // User-scoped only: still useful for invalidation, but not sufficient to cache.
                     context.registerReceiver(receiver, filter)
                     backend.log("[$TAG] Self package watcher is user-scoped; self-caller appId will not be cached")
-                    true
+                    registered = true
                 } catch (t2: Throwable) {
                     backend.log("[$TAG] Could not register self package watcher: ${t2.message}")
-                    synchronized(lifecycleLock) {
-                        if (watcherReceiver === receiver) {
-                            watcherReceiver = null
-                            watcherContext = null
-                        }
-                    }
-                    false
                 }
+            }
+            if (registered && !acceptingReload) {
+                watcherContext = context
+                watcherReceiver = receiver
+                true
+            } else {
+                if (registered) {
+                    try { context.unregisterReceiver(receiver) } catch (_: Throwable) {}
+                }
+                watcherReceiver = null
+                watcherContext = null
+                false
             }
         }
         return selfWatcherAllUsers
