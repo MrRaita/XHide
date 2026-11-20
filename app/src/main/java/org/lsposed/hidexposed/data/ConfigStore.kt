@@ -141,6 +141,9 @@ object ConfigStore {
     private var initializedInSystem = false
 
     @Volatile
+    private var initialAttemptMade = false
+
+    @Volatile
     private var lastLoadedPath: String? = null
 
     @Volatile
@@ -153,6 +156,9 @@ object ConfigStore {
 
     @Volatile
     private var publicationRevision: Long = 0L
+
+    @Volatile
+    private var preparingForReload = false
 
     internal const val SHARED_RULES_JSON_KEY = "org.lsposed.hidexposed.active_rules_json"
 
@@ -185,7 +191,7 @@ object ConfigStore {
     private var backgroundWorkerThread: Thread? = null
 
     private fun startBackgroundWorkerLocked() {
-        if (backgroundWorkerRunning) return
+        if (preparingForReload || backgroundWorkerRunning) return
         backgroundWorkerRunning = true
         val thread = Thread({
             while (backgroundWorkerRunning) {
@@ -228,16 +234,18 @@ object ConfigStore {
                 lastLoadedMtime = mtime
                 lastMtimeCheckNanos = System.nanoTime()
                 initializedInSystem = true
+                initialAttemptMade = true
                 publishSharedRules(newRules)
             }
         }
     }
 
     fun prepareForHotReload(): Boolean {
-        synchronized(this) {
+        val thread = synchronized(this) {
+            preparingForReload = true
             backgroundWorkerRunning = false
+            backgroundWorkerThread
         }
-        val thread = backgroundWorkerThread
         if (thread != null && thread !== Thread.currentThread()) {
             thread.interrupt()
             try {
@@ -250,14 +258,17 @@ object ConfigStore {
             }
         }
         synchronized(this) {
-            backgroundWorkerThread = null
+            if (backgroundWorkerThread === thread) {
+                backgroundWorkerThread = null
+            }
         }
         return true
     }
 
     fun resumeAfterHotReload() {
         synchronized(this) {
-            if (initializedInSystem) {
+            preparingForReload = false
+            if (initialAttemptMade) {
                 startBackgroundWorkerLocked()
             }
         }
@@ -267,16 +278,17 @@ object ConfigStore {
 
     fun ensureSystemLoaded() {
         val currentPath = systemConfigPath
-        if (initializedInSystem && lastLoadedPath == currentPath) return
+        if (initialAttemptMade && lastLoadedPath == currentPath) return
         synchronized(this) {
-            if (initializedInSystem && lastLoadedPath == currentPath) return
+            if (initialAttemptMade && lastLoadedPath == currentPath) return
             if (lastLoadedPath != currentPath) {
                 System.getProperties().remove(SHARED_RULES_JSON_KEY)
             }
+            initialAttemptMade = true
+            lastLoadedPath = currentPath
             val file = File(currentPath)
             val mtime = if (file.isFile) file.lastModified() else 0L
             if (loadFromSystemFile()) {
-                lastLoadedPath = currentPath
                 lastLoadedMtime = mtime
                 initializedInSystem = true
                 publishSharedRules(rules)
@@ -286,7 +298,7 @@ object ConfigStore {
     }
 
     fun shouldHidePackage(packageName: String, userId: Int, isDetectedXposedModule: Boolean): Boolean {
-        if (!initializedInSystem || lastLoadedPath != systemConfigPath) {
+        if (!initialAttemptMade || lastLoadedPath != systemConfigPath) {
             ensureSystemLoaded()
         }
         // Read the snapshot once so every check below sees the same rule set.
@@ -387,6 +399,7 @@ object ConfigStore {
             lastLoadedMtime = writtenMtime
             lastMtimeCheckNanos = System.nanoTime()
             initializedInSystem = true
+            initialAttemptMade = true
             publicationRevision++
             publishSharedRules(newRules)
             startBackgroundWorkerLocked()

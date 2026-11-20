@@ -126,21 +126,36 @@ object LauncherHook {
         }
     }
 
+    private val abortRecoveryTriggered = java.util.concurrent.atomic.AtomicBoolean(false)
+
     private fun isReloadPending(): Boolean {
         if (!acceptingReload) return false
         val elapsed = System.nanoTime() - reloadStartTimeNanos
         if (elapsed > RELOAD_TIMEOUT_NANOS) {
-            synchronized(lifecycleLock) {
-                if (acceptingReload && (System.nanoTime() - reloadStartTimeNanos > RELOAD_TIMEOUT_NANOS)) {
-                    backend.log("[$TAG] Hot reload preparation timed out without completion; framework aborted reload, restoring lifecycle")
-                    System.getProperties().remove(RESUMER_KEY)
-                    System.getProperties().remove(RETIRER_KEY)
-                    resumeLocked()
-                }
-            }
+            triggerAbortRecoveryAsync()
             return false
         }
         return true
+    }
+
+    private fun triggerAbortRecoveryAsync() {
+        if (abortRecoveryTriggered.compareAndSet(false, true)) {
+            try {
+                Thread({
+                    synchronized(lifecycleLock) {
+                        if (acceptingReload && (System.nanoTime() - reloadStartTimeNanos > RELOAD_TIMEOUT_NANOS)) {
+                            backend.log("[$TAG] Hot reload preparation timed out without completion; framework aborted reload, restoring lifecycle")
+                            System.getProperties().remove(RESUMER_KEY)
+                            System.getProperties().remove(RETIRER_KEY)
+                            resumeLocked()
+                        }
+                    }
+                    abortRecoveryTriggered.set(false)
+                }, "XHide-AbortRecovery").apply { isDaemon = true }.start()
+            } catch (_: Throwable) {
+                abortRecoveryTriggered.set(false)
+            }
+        }
     }
 
     fun prepareForHotReload(): Boolean {
@@ -1047,9 +1062,10 @@ object LauncherHook {
             // Only cache once we can guarantee invalidation on uninstall/replace, and only if no
             // lifecycle event happened mid-verification; otherwise a reassigned appId would
             // inherit IPC and cross-profile privileges.
-            if (watcherReadyAtStart) {
+            val reloadPendingAtCheck = isReloadPending()
+            if (watcherReadyAtStart && !reloadPendingAtCheck) {
                 synchronized(selfCacheLock) {
-                    if (selfCacheGeneration == generationAtStart && !isReloadPending() && selfWatcherAllUsers) {
+                    if (selfCacheGeneration == generationAtStart && !acceptingReload && selfWatcherAllUsers) {
                         cachedSelfAppId = appId
                     }
                 }
