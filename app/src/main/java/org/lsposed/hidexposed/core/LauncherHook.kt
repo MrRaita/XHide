@@ -106,10 +106,14 @@ object LauncherHook {
     private var acceptingReload = false
     private val lifecycleLock = Any()
     private var lastKnownContext: Context? = null
+    internal const val RESUMER_KEY = "org.lsposed.hidexposed.lifecycle_resumer"
 
     fun prepareForHotReload(): Boolean {
         synchronized(lifecycleLock) {
             acceptingReload = true
+            System.getProperties()[RESUMER_KEY] = Runnable {
+                synchronized(lifecycleLock) { resumeLocked() }
+            }
             synchronized(selfCacheLock) {
                 selfCacheGeneration++
                 cachedSelfAppId = -1
@@ -132,6 +136,7 @@ object LauncherHook {
     }
 
     fun resumeAfterHotReload() {
+        (System.getProperties().remove(RESUMER_KEY) as? Runnable)?.run()
         synchronized(lifecycleLock) { resumeLocked() }
     }
 

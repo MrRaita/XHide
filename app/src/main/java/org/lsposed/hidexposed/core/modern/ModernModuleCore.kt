@@ -27,10 +27,11 @@ abstract class ModernModuleCore : XposedModule() {
     protected open fun initializeOptionalLayer(module: ModernModuleCore) = Unit
 
     internal fun reinstallAfterHotReload(
+        classLoader: ClassLoader? = null,
         fallbackHandles: MutableMap<java.lang.reflect.Executable, HookHandle> = LinkedHashMap()
     ): Boolean {
-        val classLoader = requireSystemServerClassLoader()
-        return LauncherHook.install(classLoader, ModernHookBackend(this, fallbackHandles))
+        val loader = classLoader ?: requireSystemServerClassLoader()
+        return LauncherHook.install(loader, ModernHookBackend(this, fallbackHandles))
     }
 
     internal fun requireSystemServerClassLoader(): ClassLoader =

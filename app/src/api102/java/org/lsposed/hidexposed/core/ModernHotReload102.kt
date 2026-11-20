@@ -30,6 +30,8 @@ internal object ModernHotReload102 {
     fun onHotReloaded(module: ModernModule, param: XposedModuleInterface.HotReloadedParam) {
         val handles = param.oldHookHandles.associateBy { it.executable }.toMutableMap()
         val newHandles = mutableListOf<HookHandle>()
+        val classLoader = param.oldHookHandles.firstOrNull()?.executable?.declaringClass?.classLoader
+            ?: module.requireSystemServerClassLoader()
         try {
             module.log(android.util.Log.INFO, "XHide", "[API 102] onHotReloaded triggered in process: ${param.processName} (isSystemServer=${param.isSystemServer})")
             if (!param.isSystemServer || !isSupported(module)) {
@@ -61,8 +63,6 @@ internal object ModernHotReload102 {
                     }
                 }
             }
-            val classLoader = param.oldHookHandles.firstOrNull()?.executable?.declaringClass?.classLoader
-                ?: module.requireSystemServerClassLoader()
             val installedAll = LauncherHook.install(classLoader, replacementBackend)
             if (!installedAll || handles.isNotEmpty()) {
                 throw IllegalStateException("API 102 hot reload incomplete: installedAll=$installedAll, unmatched=${handles.size}")
@@ -72,7 +72,7 @@ internal object ModernHotReload102 {
             module.log(android.util.Log.ERROR, "XHide", "Hot reload hook restoration failed", t)
             val fallbackHandles = LinkedHashMap<java.lang.reflect.Executable, HookHandle>()
             val recovered = runCatching {
-                module.reinstallAfterHotReload(fallbackHandles)
+                module.reinstallAfterHotReload(classLoader, fallbackHandles)
             }.onFailure {
                 module.log(android.util.Log.ERROR, "XHide", "Fallback installation failed", it)
             }.getOrDefault(false)
@@ -86,6 +86,8 @@ internal object ModernHotReload102 {
                 // leaks, and preserve existing newHandles + handles so enforcement remains active.
                 fallbackHandles.values.forEach { runCatching { it.unhook() } }
                 module.log(android.util.Log.WARN, "XHide", "Retaining existing hooks to preserve privacy enforcement after recovery failure")
+                // Resume old generation's lifecycle state so retained callbacks do not reject self-IPC
+                (System.getProperties().remove(LauncherHook.RESUMER_KEY) as? Runnable)?.run()
             }
         } finally {
             module.resumeAfterHotReload()
