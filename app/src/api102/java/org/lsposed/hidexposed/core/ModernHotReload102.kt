@@ -64,7 +64,9 @@ internal object ModernHotReload102 {
             val classLoader = param.oldHookHandles.firstOrNull()?.executable?.declaringClass?.classLoader
                 ?: module.requireSystemServerClassLoader()
             LauncherHook.install(classLoader, replacementBackend)
-            handles.values.forEach { it.unhook() }
+            if (handles.isNotEmpty()) {
+                throw IllegalStateException("API 102 hot reload left ${handles.size} unmatched hook(s): ${handles.keys.map { it.name }}")
+            }
             module.log(android.util.Log.INFO, "XHide", "[API 102] Successfully replaced and restored hooks via replaceHook")
         } catch (t: Throwable) {
             module.log(android.util.Log.ERROR, "XHide", "Hot reload hook restoration failed", t)

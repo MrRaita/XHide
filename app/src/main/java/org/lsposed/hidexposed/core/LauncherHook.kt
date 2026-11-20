@@ -67,22 +67,20 @@ object LauncherHook {
         selfWatcherRegistered = false
         selfWatcherAllUsers = false
         selfWatcherScheduled.set(false)
-        cachedSelfAppId = -1
+        synchronized(selfCacheLock) {
+            selfCacheGeneration++
+            cachedSelfAppId = -1
+        }
         try {
             val clazz = backend.findClassIfExists(TARGET_CLASS, classLoader)
                 ?: error("Target class not found: $TARGET_CLASS")
 
-            runCatching { hookGetUserProfiles(clazz) }
-                .onFailure { backend.log("[$TAG] hookGetUserProfiles failed: ${it.message}") }
-            runCatching { hookUserManagerGetProfileIds(classLoader) }
-                .onFailure { backend.log("[$TAG] hookUserManagerGetProfileIds failed: ${it.message}") }
-            runCatching { hookProfileAccessChecks(clazz) }
-                .onFailure { backend.log("[$TAG] hookProfileAccessChecks failed: ${it.message}") }
+            hookGetUserProfiles(clazz)
+            hookUserManagerGetProfileIds(classLoader)
+            hookProfileAccessChecks(clazz)
             hookGetLauncherActivities(clazz)
-            runCatching { hookGetShortcuts(clazz) }
-                .onFailure { backend.log("[$TAG] hookGetShortcuts failed: ${it.message}") }
-            runCatching { hookResolveAndEnabledChecks(clazz) }
-                .onFailure { backend.log("[$TAG] hookResolveAndEnabledChecks failed: ${it.message}") }
+            hookGetShortcuts(clazz)
+            hookResolveAndEnabledChecks(clazz)
 
             backend.log("[$TAG] Successfully installed system hooks on $TARGET_CLASS (Android 11–17)")
         } catch (t: Throwable) {
@@ -94,6 +92,7 @@ object LauncherHook {
     @Volatile
     private var acceptingReload = false
     private val lifecycleLock = Any()
+    private var lastKnownContext: Context? = null
 
     fun prepareForHotReload(): Boolean {
         synchronized(lifecycleLock) {
@@ -125,14 +124,22 @@ object LauncherHook {
 
     private fun resumeLocked() {
         acceptingReload = false
+        synchronized(selfCacheLock) {
+            selfCacheGeneration++
+            cachedSelfAppId = -1
+        }
         ModuleCache.resumeAfterHotReload()
-        if (watcherContext != null && watcherReceiver != null) {
-            selfWatcherRegistered = true
-            scheduleSelfPackageWatcher(watcherContext!!)
+        val context = lastKnownContext
+        if (context != null) {
+            scheduleSelfPackageWatcher(context)
         }
     }
 
     private fun stopWatcherLocked() {
+        synchronized(selfCacheLock) {
+            selfCacheGeneration++
+            cachedSelfAppId = -1
+        }
         val thread = watcherThread
         if (thread != null && thread !== Thread.currentThread()) {
             try {
@@ -193,8 +200,8 @@ object LauncherHook {
                     }
                 }
             )
-        } catch (t: Throwable) {
-            backend.log("[$TAG] Could not hook getUserProfiles: ${t.message}")
+        } catch (_: NoSuchMethodException) {
+            // getUserProfiles was introduced in Android 15
         }
     }
 
@@ -231,8 +238,7 @@ object LauncherHook {
                     }
                 }
             )
-        } catch (t: Throwable) {
-            backend.log("[$TAG] Could not hook UserManagerService.getProfileIds: ${t.message}")
+        } catch (_: NoSuchMethodException) {
         }
     }
 
@@ -263,7 +269,7 @@ object LauncherHook {
                     }
                 }
             )
-        } catch (_: Throwable) {
+        } catch (_: NoSuchMethodException) {
         }
 
         // Android 15–17: boolean canAccessProfile(int callingUid, int callingUserId, int callingPid, int targetUserId, String message)
@@ -289,7 +295,7 @@ object LauncherHook {
                     }
                 }
             )
-        } catch (_: Throwable) {
+        } catch (_: NoSuchMethodException) {
         }
 
         // Android 11–12: void ensureInUserProfiles(int targetUserId, String message)
@@ -310,7 +316,7 @@ object LauncherHook {
                     }
                 }
             )
-        } catch (_: Throwable) {
+        } catch (_: NoSuchMethodException) {
         }
 
         // Android 15–17: boolean canAccessHiddenProfile(int callingUid, int callingPid)
@@ -333,7 +339,7 @@ object LauncherHook {
                     }
                 }
             )
-        } catch (_: Throwable) {
+        } catch (_: NoSuchMethodException) {
         }
 
         // Android 11–17: boolean injectHasInteractAcrossUsersFullPermission(int pid, int uid)
@@ -356,7 +362,7 @@ object LauncherHook {
                     }
                 }
             )
-        } catch (_: Throwable) {
+        } catch (_: NoSuchMethodException) {
         }
     }
 
@@ -564,7 +570,7 @@ object LauncherHook {
                 UserHandle::class.java,
                 callback = resolveCallback
             )
-        } catch (_: Throwable) {
+        } catch (_: NoSuchMethodException) {
         }
 
         // Android 11: resolveActivity(String, ComponentName, UserHandle)
@@ -577,7 +583,7 @@ object LauncherHook {
                 UserHandle::class.java,
                 callback = resolveCallback
             )
-        } catch (_: Throwable) {
+        } catch (_: NoSuchMethodException) {
         }
 
         // Android 11–17: isPackageEnabled(String, String, UserHandle)
@@ -615,7 +621,7 @@ object LauncherHook {
                     }
                 }
             )
-        } catch (_: Throwable) {
+        } catch (_: NoSuchMethodException) {
         }
 
         // Android 11–17: isActivityEnabled(String, ComponentName, UserHandle)
@@ -654,7 +660,7 @@ object LauncherHook {
                     }
                 }
             )
-        } catch (_: Throwable) {
+        } catch (_: NoSuchMethodException) {
         }
 
         // Android 11–17: getApplicationInfo(String, String, int/long, UserHandle)
@@ -695,7 +701,7 @@ object LauncherHook {
                 UserHandle::class.java,
                 callback = appInfoCallback
             )
-        } catch (_: Throwable) {
+        } catch (_: NoSuchMethodException) {
         }
         try {
             backend.findAndHookMethod(
@@ -707,7 +713,7 @@ object LauncherHook {
                 UserHandle::class.java,
                 callback = appInfoCallback
             )
-        } catch (_: Throwable) {
+        } catch (_: NoSuchMethodException) {
         }
 
         // Android 12–17: shouldHideFromSuggestions(String, UserHandle)
@@ -742,7 +748,7 @@ object LauncherHook {
                     }
                 }
             )
-        } catch (_: Throwable) {
+        } catch (_: NoSuchMethodException) {
         }
 
         // Android 11–17: getActivityLaunchIntent(String, ComponentName, UserHandle)
@@ -781,7 +787,7 @@ object LauncherHook {
                     }
                 }
             )
-        } catch (_: Throwable) {
+        } catch (_: NoSuchMethodException) {
         }
     }
 
@@ -848,7 +854,7 @@ object LauncherHook {
                     UserHandle::class.java,
                     callback = callback
                 )
-            } catch (_: Throwable) {
+            } catch (_: NoSuchMethodException) {
             }
         }
 
@@ -866,14 +872,16 @@ object LauncherHook {
                 UserHandle::class.java,
                 callback = callback
             )
-        } catch (_: Throwable) {
+        } catch (_: NoSuchMethodException) {
         }
     }
 
     private fun getContextFromImpl(serviceObject: Any?): Context? {
         if (serviceObject == null) return null
         return try {
-            backend.getObjectField(serviceObject, "mContext") as? Context
+            (backend.getObjectField(serviceObject, "mContext") as? Context)?.also {
+                lastKnownContext = it
+            }
         } catch (_: Throwable) {
             null
         }
@@ -946,7 +954,7 @@ object LauncherHook {
             // inherit IPC and cross-profile privileges.
             if (watcherReadyAtStart) {
                 synchronized(selfCacheLock) {
-                    if (selfCacheGeneration == generationAtStart) {
+                    if (selfCacheGeneration == generationAtStart && !acceptingReload && selfWatcherAllUsers) {
                         cachedSelfAppId = appId
                     }
                 }
@@ -1003,6 +1011,7 @@ object LauncherHook {
      */
     @Synchronized
     private fun ensureSelfPackageWatcher(context: Context): Boolean {
+        lastKnownContext = context
         if (selfWatcherRegistered) return selfWatcherAllUsers
         if (acceptingReload) return false
         val filter = android.content.IntentFilter().apply {
