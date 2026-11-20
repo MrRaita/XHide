@@ -19,6 +19,9 @@ import org.lsposed.hidexposed.BuildConfig
 import org.lsposed.hidexposed.data.ConfigStore
 import java.security.MessageDigest
 import java.util.ArrayList
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 
 /**
  * System-level hook targeting `LauncherAppsService$LauncherAppsImpl` and `UserManagerService`.
@@ -107,13 +110,28 @@ object LauncherHook {
     private val lifecycleLock = Any()
     private var lastKnownContext: Context? = null
     internal const val RESUMER_KEY = "org.lsposed.hidexposed.lifecycle_resumer"
+    private const val RELOAD_ABORT_TIMEOUT_MS = 10_000L
+
+    private var reloadWatchdogTask: ScheduledFuture<*>? = null
+    private val reloadWatchdogExecutor by lazy {
+        Executors.newSingleThreadScheduledExecutor { r ->
+            Thread(r, "XHide-ReloadWatchdog").apply { isDaemon = true }
+        }
+    }
+
+    internal fun updateBackend(hookBackend: HookBackend) {
+        synchronized(lifecycleLock) {
+            backend = hookBackend
+        }
+    }
 
     fun prepareForHotReload(): Boolean {
         synchronized(lifecycleLock) {
             acceptingReload = true
-            System.getProperties()[RESUMER_KEY] = Runnable {
+            val resumer = Runnable {
                 synchronized(lifecycleLock) { resumeLocked() }
             }
+            System.getProperties()[RESUMER_KEY] = resumer
             synchronized(selfCacheLock) {
                 selfCacheGeneration++
                 cachedSelfAppId = -1
@@ -130,17 +148,41 @@ object LauncherHook {
         synchronized(lifecycleLock) {
             stopWatcherLocked()
             val prepared = ModuleCache.prepareForHotReload()
-            if (!prepared) resumeLocked()
-            return prepared
+            if (!prepared) {
+                resumeLocked()
+                return false
+            }
+            scheduleReloadWatchdogLocked()
+            return true
+        }
+    }
+
+    private fun scheduleReloadWatchdogLocked() {
+        reloadWatchdogTask?.cancel(false)
+        val currentResumer = System.getProperties()[RESUMER_KEY] as? Runnable ?: return
+        try {
+            reloadWatchdogTask = reloadWatchdogExecutor.schedule({
+                synchronized(lifecycleLock) {
+                    if (acceptingReload && System.getProperties()[RESUMER_KEY] === currentResumer) {
+                        backend.log("[$TAG] Hot reload preparation timed out without completion; framework aborted reload, restoring lifecycle")
+                        System.getProperties().remove(RESUMER_KEY)
+                        resumeLocked()
+                    }
+                }
+            }, RELOAD_ABORT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        } catch (t: Throwable) {
+            backend.log("[$TAG] Could not schedule reload watchdog: ${t.message}")
         }
     }
 
     fun resumeAfterHotReload() {
-        (System.getProperties().remove(RESUMER_KEY) as? Runnable)?.run()
+        System.getProperties().remove(RESUMER_KEY)
         synchronized(lifecycleLock) { resumeLocked() }
     }
 
     private fun resumeLocked() {
+        reloadWatchdogTask?.cancel(false)
+        reloadWatchdogTask = null
         acceptingReload = false
         synchronized(selfCacheLock) {
             selfCacheGeneration++

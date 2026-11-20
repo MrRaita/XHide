@@ -32,6 +32,7 @@ internal object ModernHotReload102 {
         val newHandles = mutableListOf<HookHandle>()
         val classLoader = param.oldHookHandles.firstOrNull()?.executable?.declaringClass?.classLoader
             ?: module.requireSystemServerClassLoader()
+        var reloadSucceeded = false
         try {
             module.log(android.util.Log.INFO, "XHide", "[API 102] onHotReloaded triggered in process: ${param.processName} (isSystemServer=${param.isSystemServer})")
             if (!param.isSystemServer || !isSupported(module)) {
@@ -39,7 +40,11 @@ internal object ModernHotReload102 {
                 return
             }
 
-            val replacementBackend = object : HookBackend by ModernHookBackend(module, mutableMapOf()) {
+            // Phase 1: Planning & verification.
+            // Collect required method hooks and verify against old handles before mutating any existing hook.
+            val plannedHooks = mutableListOf<PlannedHook>()
+            val stagingHandles = mutableMapOf<java.lang.reflect.Executable, HookHandle>()
+            val stagingBackend = object : HookBackend by ModernHookBackend(module, stagingHandles) {
                 override fun findAndHookMethod(
                     clazz: Class<*>,
                     methodName: String,
@@ -48,25 +53,41 @@ internal object ModernHotReload102 {
                 ): HookHandle {
                     val method = clazz.getDeclaredMethod(methodName, *parameterTypes)
                     val old = handles[method]
-                    val replacement = if (old != null) {
-                        val replaced = old.replaceHook { chain -> invokeHookCallback(chain, callback) }
-                        handles.remove(method)
-                        replaced
-                    } else {
-                        module.hook(method)
-                            .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
-                            .intercept { chain -> invokeHookCallback(chain, callback) }
-                    }
-                    return ReloadedHandle(replacement).also {
-                        registerHook(it)
-                        newHandles.add(it)
+                    plannedHooks.add(PlannedHook(method, old, callback))
+                    return object : HookHandle() {
+                        override val executable = method
+                        override fun unhook() = Unit
                     }
                 }
             }
-            val installedAll = LauncherHook.install(classLoader, replacementBackend)
-            if (!installedAll || handles.isNotEmpty()) {
-                throw IllegalStateException("API 102 hot reload incomplete: installedAll=$installedAll, unmatched=${handles.size}")
+
+            val installedAll = LauncherHook.install(classLoader, stagingBackend)
+            val hasUnmatchedOld = handles.keys.any { oldMethod ->
+                plannedHooks.none { it.method == oldMethod }
             }
+            val hasMissingOldForPlanned = plannedHooks.any { it.oldHandle == null }
+
+            if (!installedAll || hasUnmatchedOld || hasMissingOldForPlanned || plannedHooks.size != param.oldHookHandles.size) {
+                throw IllegalStateException(
+                    "API 102 hot reload incomplete: installedAll=$installedAll, " +
+                    "planned=${plannedHooks.size}, oldHandles=${param.oldHookHandles.size}, " +
+                    "missingOld=$hasMissingOldForPlanned, unmatchedOld=$hasUnmatchedOld"
+                )
+            }
+
+            // Phase 2: Atomic commit.
+            // Replace hooks now that all targets are verified and matched.
+            val activeHandles = mutableMapOf<java.lang.reflect.Executable, HookHandle>()
+            for (plan in plannedHooks) {
+                val oldHandle = plan.oldHandle!!
+                val replacement = oldHandle.replaceHook { chain -> invokeHookCallback(chain, plan.callback) }
+                val reloadedHandle = ReloadedHandle(replacement)
+                newHandles.add(reloadedHandle)
+                activeHandles[plan.method] = reloadedHandle
+                handles.remove(plan.method)
+            }
+            LauncherHook.updateBackend(ModernHookBackend(module, activeHandles))
+            reloadSucceeded = true
             module.log(android.util.Log.INFO, "XHide", "[API 102] Successfully replaced and restored hooks via replaceHook")
         } catch (t: Throwable) {
             module.log(android.util.Log.ERROR, "XHide", "Hot reload hook restoration failed", t)
@@ -79,6 +100,7 @@ internal object ModernHotReload102 {
 
             if (recovered) {
                 // Recovery succeeded: unhook the superseded partial replacements and old handles.
+                reloadSucceeded = true
                 newHandles.forEach { runCatching { it.unhook() } }
                 handles.values.forEach { runCatching { it.unhook() } }
             } else {
@@ -90,9 +112,17 @@ internal object ModernHotReload102 {
                 (System.getProperties().remove(LauncherHook.RESUMER_KEY) as? Runnable)?.run()
             }
         } finally {
-            module.resumeAfterHotReload()
+            if (reloadSucceeded) {
+                module.resumeAfterHotReload()
+            }
         }
     }
+
+    private class PlannedHook(
+        val method: java.lang.reflect.Method,
+        val oldHandle: XposedInterface.HookHandle?,
+        val callback: HookCallback
+    )
 
     private class ReloadedHandle(
         private val handle: XposedInterface.HookHandle

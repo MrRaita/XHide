@@ -203,4 +203,18 @@ class ConfigStoreCompatibilityTest {
         // shouldHidePackage detects the modified file and reloads com.pkg2 as hidden
         assertTrue(ConfigStore.shouldHidePackage("com.pkg2", 0, false))
     }
+
+    @Test
+    fun sharedRulesSynchronizeAcrossGenerations() {
+        val payload = JSONObject().apply {
+            put("autoHide", false)
+            put("blacklist", JSONArray(listOf("0:com.shared.app")))
+        }.toString()
+        assertNotNull(ConfigStore.applySystemIpcUpdate(payload))
+
+        // Verify shared rules property is published
+        val sharedJson = System.getProperties()[ConfigStore.SHARED_RULES_JSON_KEY] as? String
+        assertNotNull(sharedJson)
+        assertTrue(sharedJson!!.contains("0:com.shared.app"))
+    }
 }

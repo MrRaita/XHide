@@ -2,6 +2,7 @@ package org.lsposed.hidexposed.core
 
 import io.github.libxposed.api.XposedInterface
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Test
@@ -47,6 +48,17 @@ class HookCallbackContractTest {
 
         assertNull(ModernModuleCore.invokeHookCallback(chain, callback))
         assertEquals(0, chain.proceedCount)
+    }
+
+    @Test
+    fun resumeAfterHotReloadRemovesResumerWithoutExecuting() {
+        var executed = false
+        System.getProperties()[LauncherHook.RESUMER_KEY] = Runnable {
+            executed = true
+        }
+        LauncherHook.resumeAfterHotReload()
+        assertNull(System.getProperties()[LauncherHook.RESUMER_KEY])
+        assertFalse(executed)
     }
 }
 
