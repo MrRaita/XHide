@@ -140,19 +140,170 @@ object ConfigStore {
     @Volatile
     private var initializedInSystem = false
 
+    @Volatile
+    private var initialAttemptMade = false
+
+    @Volatile
+    private var lastLoadedPath: String? = null
+
+    @Volatile
+    private var lastLoadedMtime: Long = -1L
+
+    @Volatile
+    private var lastMtimeCheckNanos: Long = 0L
+
+    private const val RELOAD_THROTTLE_NANOS = 250_000_000L // 250 ms
+
+    @Volatile
+    private var publicationRevision: Long = 0L
+
+    @Volatile
+    private var preparingForReload = false
+
+    internal const val SHARED_RULES_JSON_KEY = "org.lsposed.hidexposed.active_rules_json"
+
+    private fun publishSharedRules(snapshot: HideRules) {
+        try {
+            System.getProperties()[SHARED_RULES_JSON_KEY] = rulesToJson(snapshot).toString()
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun adoptSharedRulesIfAvailable() {
+        try {
+            val sharedJson = System.getProperties()[SHARED_RULES_JSON_KEY] as? String ?: return
+            val decoded = decodeSystemConfig(sharedJson) ?: return
+            if (decoded == rules) return
+            synchronized(this) {
+                val currentShared = System.getProperties()[SHARED_RULES_JSON_KEY] as? String
+                if (currentShared == sharedJson && decoded != rules) {
+                    rules = decoded
+                }
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
+    @Volatile
+    private var backgroundWorkerRunning = false
+
+    @Volatile
+    private var backgroundWorkerThread: Thread? = null
+
+    private fun startBackgroundWorkerLocked() {
+        if (preparingForReload || backgroundWorkerRunning) return
+        backgroundWorkerRunning = true
+        val thread = Thread({
+            while (backgroundWorkerRunning) {
+                try {
+                    Thread.sleep(100)
+                    checkAndReloadSystemFile()
+                } catch (_: InterruptedException) {
+                    break
+                } catch (_: Throwable) {
+                }
+            }
+        }, "XHide-ConfigSync").apply {
+            isDaemon = true
+            priority = Thread.MIN_PRIORITY
+        }
+        backgroundWorkerThread = thread
+        thread.start()
+    }
+
+    internal fun checkAndReloadSystemFile() {
+        adoptSharedRulesIfAvailable()
+        val currentPath = systemConfigPath
+        val file = File(currentPath)
+        if (!file.isFile) return
+        val mtime = file.lastModified()
+        if (mtime == 0L || mtime == lastLoadedMtime) return
+
+        val revisionBeforeRead = publicationRevision
+        val newRules = try {
+            if (!file.canRead() || file.length() > MAX_IPC_PAYLOAD_CHARS) return
+            parseRules(JSONObject(file.readText()))
+        } catch (_: Throwable) {
+            return
+        }
+
+        synchronized(this) {
+            if (revisionBeforeRead == publicationRevision && mtime != lastLoadedMtime) {
+                rules = newRules
+                lastLoadedPath = currentPath
+                lastLoadedMtime = mtime
+                lastMtimeCheckNanos = System.nanoTime()
+                initializedInSystem = true
+                initialAttemptMade = true
+                publishSharedRules(newRules)
+            }
+        }
+    }
+
+    fun prepareForHotReload(): Boolean {
+        val thread = synchronized(this) {
+            preparingForReload = true
+            backgroundWorkerRunning = false
+            backgroundWorkerThread
+        }
+        if (thread != null && thread !== Thread.currentThread()) {
+            thread.interrupt()
+            try {
+                thread.join(500)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+            if (thread.isAlive) {
+                return false
+            }
+        }
+        synchronized(this) {
+            if (backgroundWorkerThread === thread) {
+                backgroundWorkerThread = null
+            }
+        }
+        return true
+    }
+
+    fun resumeAfterHotReload() {
+        synchronized(this) {
+            preparingForReload = false
+            if (initialAttemptMade) {
+                startBackgroundWorkerLocked()
+            }
+        }
+    }
+
     fun userKey(userId: Int, packageName: String): String = "$userId:$packageName"
 
     fun ensureSystemLoaded() {
-        if (initializedInSystem) return
+        val currentPath = systemConfigPath
+        if (initialAttemptMade && lastLoadedPath == currentPath) return
         synchronized(this) {
-            if (initializedInSystem) return
-            loadFromSystemFile()
-            initializedInSystem = true
+            if (initialAttemptMade && lastLoadedPath == currentPath) return
+            if (lastLoadedPath != currentPath) {
+                System.getProperties().remove(SHARED_RULES_JSON_KEY)
+            }
+            try {
+                val file = File(currentPath)
+                val mtime = if (file.isFile) file.lastModified() else 0L
+                if (loadFromSystemFile()) {
+                    lastLoadedMtime = mtime
+                    initializedInSystem = true
+                    publishSharedRules(rules)
+                }
+            } finally {
+                lastLoadedPath = currentPath
+                initialAttemptMade = true
+            }
+            startBackgroundWorkerLocked()
         }
     }
 
     fun shouldHidePackage(packageName: String, userId: Int, isDetectedXposedModule: Boolean): Boolean {
-        ensureSystemLoaded()
+        if (!initialAttemptMade || lastLoadedPath != systemConfigPath) {
+            ensureSystemLoaded()
+        }
         // Read the snapshot once so every check below sees the same rule set.
         val r = rules
         val uKey = userKey(userId, packageName)
@@ -243,11 +394,18 @@ object ConfigStore {
             // Persist first and publish only on success, so memory, disk and the UI never diverge:
             // an unpersisted update would otherwise be reported as applied and silently revert on
             // the next system_server restart.
-            if (!saveToSystemFile(newRules)) return null
+            val writtenMtime = saveToSystemFile(newRules) ?: return null
 
             // Zero-race atomic reference swap: concurrent Binder threads never see a partial update
             rules = newRules
+            lastLoadedPath = systemConfigPath
+            lastLoadedMtime = writtenMtime
+            lastMtimeCheckNanos = System.nanoTime()
             initializedInSystem = true
+            initialAttemptMade = true
+            publicationRevision++
+            publishSharedRules(newRules)
+            startBackgroundWorkerLocked()
 
             val changed = mutableSetOf<String>()
             val changedArray = json.optJSONArray("changed")
@@ -283,27 +441,30 @@ object ConfigStore {
         }
     }
 
-    private fun loadFromSystemFile() {
-        try {
+    private fun loadFromSystemFile(): Boolean {
+        return try {
             val file = File(systemConfigPath)
-            if (!file.exists() || !file.canRead() || file.length() > MAX_IPC_PAYLOAD_CHARS) return
+            if (!file.exists() || !file.canRead() || file.length() > MAX_IPC_PAYLOAD_CHARS) return false
             rules = parseRules(JSONObject(file.readText()))
+            true
         } catch (_: Throwable) {
+            false
         }
     }
 
-    /** Returns true only when the snapshot was durably written; the previous file is kept otherwise. */
-    private fun saveToSystemFile(snapshot: HideRules): Boolean {
+    /** Returns the mtime on successful durable write; null otherwise. */
+    private fun saveToSystemFile(snapshot: HideRules): Long? {
         return try {
             val bytes = rulesToJson(snapshot).toString().toByteArray(Charsets.UTF_8)
             // loadFromSystemFile refuses files above this size, and the normalized snapshot can be
             // larger than the accepted payload. Reject it here so an update that could not be
             // reloaded after a restart is never reported as applied.
-            if (bytes.size > MAX_IPC_PAYLOAD_CHARS) return false
+            if (bytes.size > MAX_IPC_PAYLOAD_CHARS) return null
             DurableFiles.writeAtomically(systemConfigPath, bytes)
-            true
+            val file = File(systemConfigPath)
+            if (file.isFile) file.lastModified() else 0L
         } catch (_: Throwable) {
-            false
+            null
         }
     }
 

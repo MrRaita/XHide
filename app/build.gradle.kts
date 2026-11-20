@@ -1,9 +1,35 @@
+import java.io.File
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
 
+configurations {
+    create("api101Verification")
+    create("api102CompileOnly")
+    named("compileOnly") {
+        extendsFrom(getByName("api102CompileOnly"))
+    }
+    named("debugCompileOnly") {
+        extendsFrom(getByName("api102CompileOnly"))
+    }
+    named("releaseCompileOnly") {
+        extendsFrom(getByName("api102CompileOnly"))
+    }
+}
+
 android {
+    sourceSets {
+        named("debug") {
+            java.directories.add("src/api102/java")
+        }
+        named("release") {
+            java.directories.add("src/api102/java")
+        }
+    }
+
+
     namespace = "org.lsposed.hidexposed"
     compileSdk = 37
 
@@ -102,8 +128,75 @@ kotlin {
     }
 }
 
+tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class).configureEach {
+    if (name == "compileDebugKotlin" || name == "compileReleaseKotlin") {
+        source("src/api102/java")
+    }
+}
+
+val verifyApi101Core by tasks.registering(JavaExec::class) {
+    group = "verification"
+    description = "Compiles the production modern core against libxposed API 101 only."
+
+    val api101VerificationSources = files(
+        fileTree("src/main/java/org/lsposed/hidexposed/core") {
+            exclude("AppDiagnostics.kt")
+        },
+        fileTree("src/main/java/org/lsposed/hidexposed/data"),
+        fileTree("src/api101/java"),
+        fileTree(layout.buildDirectory.dir("generated/source/buildConfig/debug")) {
+            include("**/BuildConfig.java")
+        }
+    )
+    val api101VerificationClasspath = files(
+        provider {
+            tasks.named("compileDebugKotlin", org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class)
+                .get().libraries.filter {
+                    it.name != "api-102.0.0-api.jar"
+                }
+        },
+        configurations.getByName("api101Verification").incoming.artifactView {
+            attributes {
+                attribute(
+                    com.android.build.gradle.internal.publishing.AndroidArtifacts.ARTIFACT_TYPE,
+                    com.android.build.gradle.internal.publishing.AndroidArtifacts.ArtifactType.CLASSES_JAR.type
+                )
+            }
+        }.files
+    )
+    val sourceFiles = api101VerificationSources.elements.map { files ->
+        files.map { it.asFile }.sortedBy { it.absolutePath }.map { it.absolutePath }
+    }
+    val classpathText = api101VerificationClasspath.elements.map { files ->
+        files.joinToString(File.pathSeparator) { it.asFile.absolutePath }
+    }
+    val output = layout.buildDirectory.dir("api101-verification/classes")
+
+    inputs.files(api101VerificationSources, api101VerificationClasspath)
+    outputs.dir(output)
+    dependsOn("generateDebugBuildConfig")
+
+    classpath = files(configurations.getByName("kotlinCompilerClasspath"))
+    mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
+    argumentProviders.add(
+        org.gradle.process.CommandLineArgumentProvider {
+            listOf(
+                "-no-stdlib",
+                "-no-reflect",
+                "-jvm-target", "21",
+                "-classpath", classpathText.get(),
+                "-d", output.get().asFile.absolutePath
+            ) + sourceFiles.get()
+        }
+    )
+    doFirst { output.get().asFile.mkdirs() }
+}
+
 dependencies {
-    compileOnly("de.robv.android.xposed:api:82")
+    add("api101Verification", "io.github.libxposed:api:101.0.1")
+    add("api101Verification", "org.json:json:20240303")
+    add("kotlinCompilerClasspath", "org.jetbrains.kotlin:kotlin-compiler-embeddable:${libs.versions.kotlin.get()}")
+    add("api102CompileOnly", "io.github.libxposed:api:102.0.0")
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
@@ -115,5 +208,6 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("io.github.libxposed:api:102.0.0")
     testImplementation("org.json:json:20240303")
 }
