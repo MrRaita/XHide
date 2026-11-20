@@ -23,11 +23,13 @@ internal object ModernHotReload102 {
 
     fun onHotReloading(module: XposedModule): Boolean {
         if (!isSupported(module)) return false
+        module.log(android.util.Log.INFO, "XHide", "[API 102] onHotReloading triggered; preparing hooks for hot reload")
         return LauncherHook.prepareForHotReload()
     }
 
     fun onHotReloaded(module: ModernModule, param: XposedModuleInterface.HotReloadedParam) {
         try {
+            module.log(android.util.Log.INFO, "XHide", "[API 102] onHotReloaded triggered in process: ${param.processName} (isSystemServer=${param.isSystemServer})")
             if (!param.isSystemServer || !isSupported(module)) {
                 param.oldHookHandles.forEach { it.unhook() }
                 return
@@ -42,13 +44,22 @@ internal object ModernHotReload102 {
                     callback: HookCallback
                 ): HookHandle {
                     val method = clazz.getDeclaredMethod(methodName, *parameterTypes)
-                    val old = handles.remove(method) ?: error("No existing hook for $method")
-                    val replacement = old.replaceHook { chain -> invokeHookCallback(chain, callback) }
+                    val old = handles.remove(method)
+                    val replacement = if (old != null) {
+                        old.replaceHook { chain -> invokeHookCallback(chain, callback) }
+                    } else {
+                        module.hook(method)
+                            .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                            .intercept { chain -> invokeHookCallback(chain, callback) }
+                    }
                     return ReloadedHandle(replacement).also { registerHook(it) }
                 }
             }
-            LauncherHook.install(module.requireSystemServerClassLoader(), replacementBackend)
+            val classLoader = param.oldHookHandles.firstOrNull()?.executable?.declaringClass?.classLoader
+                ?: module.requireSystemServerClassLoader()
+            LauncherHook.install(classLoader, replacementBackend)
             handles.values.forEach { it.unhook() }
+            module.log(android.util.Log.INFO, "XHide", "[API 102] Successfully replaced and restored hooks via replaceHook")
         } catch (t: Throwable) {
             module.log(android.util.Log.ERROR, "XHide", "Hot reload hook restoration failed", t)
             // Reinstalling with the API 101 backend is safer than leaving partial hooks behind.

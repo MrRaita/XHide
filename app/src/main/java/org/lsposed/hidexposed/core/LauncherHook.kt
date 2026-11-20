@@ -135,7 +135,7 @@ object LauncherHook {
         }
         if (thread != null && thread !== Thread.currentThread()) {
             try {
-                thread.join(2_000)
+                thread.join(500)
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt()
             }

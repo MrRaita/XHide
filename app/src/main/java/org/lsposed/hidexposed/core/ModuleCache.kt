@@ -8,8 +8,8 @@ import android.os.Process
 import android.os.UserHandle
 import org.lsposed.hidexposed.data.DurableFiles
 import java.io.File
-import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -73,15 +73,13 @@ object ModuleCache {
             acceptingReload = true
             persistNow()
             val executor = persistExecutor
-            executor.shutdown()
+            executor.shutdownNow()
             try {
-                if (!executor.awaitTermination(2, TimeUnit.SECONDS)) {
-                    executor.shutdownNow()
+                if (!executor.awaitTermination(500, TimeUnit.MILLISECONDS)) {
                     resumeExecutor()
                     return false
                 }
             } catch (_: InterruptedException) {
-                executor.shutdownNow()
                 Thread.currentThread().interrupt()
                 resumeExecutor()
                 return false
@@ -97,11 +95,13 @@ object ModuleCache {
     }
 
     private fun newPersistExecutor(): ScheduledExecutorService =
-        Executors.newSingleThreadScheduledExecutor { r ->
+        ScheduledThreadPoolExecutor(1) { r ->
             Thread(r, "XHide-ModuleCache").apply {
                 isDaemon = true
                 priority = Thread.MIN_PRIORITY
             }
+        }.apply {
+            executeExistingDelayedTasksAfterShutdownPolicy = false
         }
 
     private fun ensurePersistedLoaded() {

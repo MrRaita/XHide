@@ -23,13 +23,17 @@ abstract class ModernModuleCore : XposedModule() {
     protected open fun initializeOptionalLayer(module: ModernModuleCore) = Unit
 
     internal fun reinstallAfterHotReload(): Boolean {
-        val classLoader = systemServerClassLoader ?: return false
+        val classLoader = systemServerClassLoader
+            ?: Thread.currentThread().contextClassLoader
+            ?: ClassLoader.getSystemClassLoader()
         LauncherHook.install(classLoader, ModernHookBackend(this, LinkedHashMap()))
         return true
     }
 
     internal fun requireSystemServerClassLoader(): ClassLoader =
-        systemServerClassLoader ?: error("System server has not started")
+        systemServerClassLoader
+            ?: Thread.currentThread().contextClassLoader
+            ?: ClassLoader.getSystemClassLoader()
 
     internal fun resumeAfterHotReload() {
         LauncherHook.resumeAfterHotReload()
