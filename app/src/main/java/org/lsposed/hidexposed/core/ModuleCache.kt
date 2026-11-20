@@ -6,8 +6,6 @@ import android.content.pm.PackageManager
 import android.os.Binder
 import android.os.Process
 import android.os.UserHandle
-import de.robv.android.xposed.XposedBridge
-import de.robv.android.xposed.XposedHelpers
 import org.lsposed.hidexposed.data.DurableFiles
 import java.io.File
 import java.util.concurrent.Executors
@@ -50,16 +48,61 @@ object ModuleCache {
     private var persistedLoaded = false
     private val persistLock = Any()
     private val persistScheduled = AtomicBoolean(false)
-    private val persistExecutor: ScheduledExecutorService by lazy {
+    private var persistExecutor: ScheduledExecutorService = newPersistExecutor()
+
+    private fun isSystemServer(): Boolean = Process.myUid() == Process.SYSTEM_UID
+
+    @Volatile
+    private var backend: HookBackend? = null
+    private val lifecycleLock = Any()
+
+    @Volatile
+    private var acceptingReload = false
+
+    fun resumeAfterHotReload() = resumeExecutor()
+
+    private fun resumeExecutor() {
+        synchronized(lifecycleLock) {
+            acceptingReload = false
+            if (persistExecutor.isTerminated) persistExecutor = newPersistExecutor()
+        }
+    }
+
+    fun prepareForHotReload(): Boolean {
+        synchronized(lifecycleLock) {
+            acceptingReload = true
+            persistNow()
+            val executor = persistExecutor
+            executor.shutdown()
+            try {
+                if (!executor.awaitTermination(2, TimeUnit.SECONDS)) {
+                    executor.shutdownNow()
+                    resumeExecutor()
+                    return false
+                }
+            } catch (_: InterruptedException) {
+                executor.shutdownNow()
+                Thread.currentThread().interrupt()
+                resumeExecutor()
+                return false
+            }
+            return true
+        }
+    }
+
+    private fun ensureInitialized(hookBackend: HookBackend) {
+        synchronized(lifecycleLock) {
+            if (backend == null) backend = hookBackend
+        }
+    }
+
+    private fun newPersistExecutor(): ScheduledExecutorService =
         Executors.newSingleThreadScheduledExecutor { r ->
             Thread(r, "XHide-ModuleCache").apply {
                 isDaemon = true
                 priority = Thread.MIN_PRIORITY
             }
         }
-    }
-
-    private fun isSystemServer(): Boolean = Process.myUid() == Process.SYSTEM_UID
 
     private fun ensurePersistedLoaded() {
         if (persistedLoaded) return
@@ -74,9 +117,9 @@ object ModuleCache {
                 for ((key, isModule) in loaded) {
                     apkModuleCache.putIfAbsent(key, isModule)
                 }
-                XposedBridge.log("[$TAG] Loaded ${loaded.size} persisted module verdicts")
+                backend?.log("[$TAG] Loaded ${loaded.size} persisted module verdicts")
             } catch (t: Throwable) {
-                XposedBridge.log("[$TAG] Could not load module cache: ${t.message}")
+                backend?.log("[$TAG] Could not load module cache: ${t.message}")
             } finally {
                 persistedLoaded = true
             }
@@ -86,6 +129,11 @@ object ModuleCache {
     private fun schedulePersist() {
         if (!isSystemServer()) return
         if (!persistScheduled.compareAndSet(false, true)) return
+        if (acceptingReload) {
+            persistScheduled.set(false)
+            persistNow()
+            return
+        }
         try {
             persistExecutor.schedule({
                 persistScheduled.set(false)
@@ -93,7 +141,7 @@ object ModuleCache {
             }, PERSIST_DELAY_MS, TimeUnit.MILLISECONDS)
         } catch (t: Throwable) {
             persistScheduled.set(false)
-            XposedBridge.log("[$TAG] Could not schedule module cache write: ${t.message}")
+            backend?.log("[$TAG] Could not schedule module cache write: ${t.message}")
         }
     }
 
@@ -106,21 +154,23 @@ object ModuleCache {
             if (bytes.size > ModuleCacheFile.MAX_FILE_BYTES) return
             DurableFiles.writeAtomically(ModuleCacheFile.PATH, bytes)
         } catch (t: Throwable) {
-            XposedBridge.log("[$TAG] Could not persist module cache: ${t.message}")
+            backend?.log("[$TAG] Could not persist module cache: ${t.message}")
         }
     }
 
-    fun isXposedModule(
+    internal fun isXposedModule(
         packageName: String,
         appInfo: ApplicationInfo?,
         context: Context?,
-        userHandle: UserHandle?
+        userHandle: UserHandle?,
+        backend: HookBackend
     ): Boolean {
+        ensureInitialized(backend)
         if (packageName == "android") {
             return false
         }
 
-        val resolvedAppInfo = (appInfo ?: resolveAppInfoSafely(packageName, context, userHandle)) ?: return false
+        val resolvedAppInfo = (appInfo ?: resolveAppInfoSafely(packageName, context, userHandle, backend)) ?: return false
         val sourceDir = resolvedAppInfo.sourceDir ?: resolvedAppInfo.publicSourceDir ?: return false
 
         // Skip unmodified built-in ROM partition apps (/system, /product, /system_ext, /vendor, /apex)
@@ -138,11 +188,11 @@ object ModuleCache {
 
         // A failed APK read is not a verdict: return the safe default without caching it, so a
         // transient I/O error cannot persist a module as "not a module" across boots.
-        val detected = scanModule(packageName, resolvedAppInfo, context, userHandle) ?: return false
+        val detected = scanModule(packageName, resolvedAppInfo, context, userHandle, backend) ?: return false
         apkModuleCache[cacheKey] = detected
         schedulePersist()
         if (detected) {
-            XposedBridge.log("[$TAG] Detected Xposed module: $packageName ($sourceDir)")
+            backend?.log("[$TAG] Detected Xposed module: $packageName ($sourceDir)")
         }
         return detected
     }
@@ -150,7 +200,8 @@ object ModuleCache {
     private fun resolveAppInfoSafely(
         packageName: String,
         context: Context?,
-        userHandle: UserHandle?
+        userHandle: UserHandle?,
+        backend: HookBackend
     ): ApplicationInfo? {
         if (context == null) return null
         val token = Binder.clearCallingIdentity()
@@ -158,8 +209,8 @@ object ModuleCache {
             val pm = context.packageManager
             if (userHandle != null) {
                 try {
-                    val userId = userIdOf(userHandle)
-                    val info = XposedHelpers.callMethod(
+                    val userId = userIdOf(userHandle, backend)
+                    val info = backend.callMethod(
                         pm,
                         "getApplicationInfoAsUser",
                         packageName,
@@ -181,12 +232,13 @@ object ModuleCache {
         }
     }
 
-    fun detectModuleFromAppInfo(
+    internal fun detectModuleFromAppInfo(
         packageName: String,
         appInfo: ApplicationInfo,
         context: Context?,
-        userHandle: UserHandle?
-    ): Boolean = scanModule(packageName, appInfo, context, userHandle) ?: false
+        userHandle: UserHandle?,
+        backend: HookBackend
+    ): Boolean = scanModule(packageName, appInfo, context, userHandle, backend) ?: false
 
     /**
      * Returns true/false for a definitive verdict, or null when the APK could not be read
@@ -196,7 +248,8 @@ object ModuleCache {
         packageName: String,
         appInfo: ApplicationInfo,
         context: Context?,
-        userHandle: UserHandle?
+        userHandle: UserHandle?,
+        backend: HookBackend
     ): Boolean? {
         // 1. Fast manifest meta-data check (Classic Xposed & Modern LibXposed)
         // Hook-provided ApplicationInfo often lacks metaData. If the GET_META_DATA re-query also
@@ -208,7 +261,7 @@ object ModuleCache {
                 metadataChecked = true
                 appInfo.metaData
             } else {
-                val resolved = resolveAppInfoSafely(packageName, context, userHandle)
+                val resolved = resolveAppInfoSafely(packageName, context, userHandle, backend)
                 if (resolved != null) metadataChecked = true
                 resolved?.metaData
             }
