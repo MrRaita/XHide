@@ -817,11 +817,19 @@ fun MainScreen(
                 try {
                     val maxImportBytes = 512 * 1024
                     val jsonStr = context.contentResolver.openInputStream(uri)?.use { input ->
-                        val bytes = input.readNBytes(maxImportBytes + 1)
-                        if (bytes.size > maxImportBytes) {
-                            throw IllegalArgumentException("Backup file too large")
+                        val buffer = java.io.ByteArrayOutputStream()
+                        val temp = ByteArray(8192)
+                        var totalRead = 0
+                        while (true) {
+                            val read = input.read(temp)
+                            if (read == -1) break
+                            totalRead += read
+                            if (totalRead > maxImportBytes) {
+                                throw IllegalArgumentException("Backup file too large")
+                            }
+                            buffer.write(temp, 0, read)
                         }
-                        String(bytes, Charsets.UTF_8)
+                        buffer.toString(Charsets.UTF_8.name())
                     } ?: throw IllegalArgumentException("Empty file")
 
                     val json = JSONObject(jsonStr)
