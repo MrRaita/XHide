@@ -147,24 +147,27 @@ object ConfigStore {
     private var lastLoadedMtime: Long = -1L
 
     @Volatile
-    private var lastMtimeCheckMs: Long = 0L
+    private var lastMtimeCheckNanos: Long = 0L
+
+    private const val RELOAD_THROTTLE_NANOS = 250_000_000L // 250 ms
 
     fun userKey(userId: Int, packageName: String): String = "$userId:$packageName"
 
     fun ensureSystemLoaded() {
-        val now = System.currentTimeMillis()
+        val now = System.nanoTime()
         val currentPath = systemConfigPath
-        if (initializedInSystem && currentPath == lastLoadedPath && (now - lastMtimeCheckMs < 250L)) return
+        if (initializedInSystem && currentPath == lastLoadedPath && (now - lastMtimeCheckNanos < RELOAD_THROTTLE_NANOS)) return
         synchronized(this) {
-            if (initializedInSystem && currentPath == lastLoadedPath && (now - lastMtimeCheckMs < 250L)) return
-            lastMtimeCheckMs = now
+            if (initializedInSystem && currentPath == lastLoadedPath && (now - lastMtimeCheckNanos < RELOAD_THROTTLE_NANOS)) return
+            lastMtimeCheckNanos = now
             val file = File(currentPath)
             val mtime = if (file.isFile) file.lastModified() else 0L
             if (!initializedInSystem || currentPath != lastLoadedPath || mtime != lastLoadedMtime) {
-                loadFromSystemFile()
-                lastLoadedPath = currentPath
-                lastLoadedMtime = mtime
-                initializedInSystem = true
+                if (loadFromSystemFile()) {
+                    lastLoadedPath = currentPath
+                    lastLoadedMtime = mtime
+                    initializedInSystem = true
+                }
             }
         }
     }
@@ -267,7 +270,7 @@ object ConfigStore {
             rules = newRules
             lastLoadedPath = systemConfigPath
             lastLoadedMtime = File(systemConfigPath).lastModified()
-            lastMtimeCheckMs = System.currentTimeMillis()
+            lastMtimeCheckNanos = System.nanoTime()
             initializedInSystem = true
 
             val changed = mutableSetOf<String>()
@@ -304,12 +307,14 @@ object ConfigStore {
         }
     }
 
-    private fun loadFromSystemFile() {
-        try {
+    private fun loadFromSystemFile(): Boolean {
+        return try {
             val file = File(systemConfigPath)
-            if (!file.exists() || !file.canRead() || file.length() > MAX_IPC_PAYLOAD_CHARS) return
+            if (!file.exists() || !file.canRead() || file.length() > MAX_IPC_PAYLOAD_CHARS) return false
             rules = parseRules(JSONObject(file.readText()))
+            true
         } catch (_: Throwable) {
+            false
         }
     }
 
