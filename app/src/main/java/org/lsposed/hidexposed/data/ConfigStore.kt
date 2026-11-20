@@ -284,14 +284,17 @@ object ConfigStore {
             if (lastLoadedPath != currentPath) {
                 System.getProperties().remove(SHARED_RULES_JSON_KEY)
             }
-            initialAttemptMade = true
-            lastLoadedPath = currentPath
-            val file = File(currentPath)
-            val mtime = if (file.isFile) file.lastModified() else 0L
-            if (loadFromSystemFile()) {
-                lastLoadedMtime = mtime
-                initializedInSystem = true
-                publishSharedRules(rules)
+            try {
+                val file = File(currentPath)
+                val mtime = if (file.isFile) file.lastModified() else 0L
+                if (loadFromSystemFile()) {
+                    lastLoadedMtime = mtime
+                    initializedInSystem = true
+                    publishSharedRules(rules)
+                }
+            } finally {
+                lastLoadedPath = currentPath
+                initialAttemptMade = true
             }
             startBackgroundWorkerLocked()
         }

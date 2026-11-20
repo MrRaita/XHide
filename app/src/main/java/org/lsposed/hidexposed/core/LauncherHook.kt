@@ -142,15 +142,20 @@ object LauncherHook {
         if (abortRecoveryTriggered.compareAndSet(false, true)) {
             try {
                 Thread({
-                    synchronized(lifecycleLock) {
-                        if (acceptingReload && (System.nanoTime() - reloadStartTimeNanos > RELOAD_TIMEOUT_NANOS)) {
-                            backend.log("[$TAG] Hot reload preparation timed out without completion; framework aborted reload, restoring lifecycle")
-                            System.getProperties().remove(RESUMER_KEY)
-                            System.getProperties().remove(RETIRER_KEY)
-                            resumeLocked()
+                    try {
+                        synchronized(lifecycleLock) {
+                            if (acceptingReload && (System.nanoTime() - reloadStartTimeNanos > RELOAD_TIMEOUT_NANOS)) {
+                                backend.log("[$TAG] Hot reload preparation timed out without completion; framework aborted reload, restoring lifecycle")
+                                System.getProperties().remove(RESUMER_KEY)
+                                System.getProperties().remove(RETIRER_KEY)
+                                resumeLocked()
+                            }
                         }
+                    } catch (t: Throwable) {
+                        backend.log("[$TAG] Failed to recover from aborted reload: ${t.message}")
+                    } finally {
+                        abortRecoveryTriggered.set(false)
                     }
-                    abortRecoveryTriggered.set(false)
                 }, "XHide-AbortRecovery").apply { isDaemon = true }.start()
             } catch (_: Throwable) {
                 abortRecoveryTriggered.set(false)
