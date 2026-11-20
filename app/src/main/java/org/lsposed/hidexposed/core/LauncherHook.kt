@@ -58,7 +58,7 @@ object LauncherHook {
     private var watcherReceiver: android.content.BroadcastReceiver? = null
     private var watcherThread: Thread? = null
 
-    internal fun install(classLoader: ClassLoader, hookBackend: HookBackend) {
+    internal fun install(classLoader: ClassLoader, hookBackend: HookBackend): Boolean {
         synchronized(lifecycleLock) {
             backend = hookBackend
             acceptingReload = false
@@ -71,22 +71,35 @@ object LauncherHook {
             selfCacheGeneration++
             cachedSelfAppId = -1
         }
-        try {
-            val clazz = backend.findClassIfExists(TARGET_CLASS, classLoader)
-                ?: error("Target class not found: $TARGET_CLASS")
-
-            hookGetUserProfiles(clazz)
-            hookUserManagerGetProfileIds(classLoader)
-            hookProfileAccessChecks(clazz)
-            hookGetLauncherActivities(clazz)
-            hookGetShortcuts(clazz)
-            hookResolveAndEnabledChecks(clazz)
-
-            backend.log("[$TAG] Successfully installed system hooks on $TARGET_CLASS (Android 11–17)")
-        } catch (t: Throwable) {
-            backend.log("[$TAG] Failed to install LauncherHook: ${t.message}")
-            throw t
+        val clazz = backend.findClassIfExists(TARGET_CLASS, classLoader)
+        if (clazz == null) {
+            backend.log("[$TAG] Target class not found: $TARGET_CLASS")
+            return false
         }
+
+        var allInstalled = true
+        fun runHookGroup(name: String, action: () -> Unit) {
+            try {
+                action()
+            } catch (t: Throwable) {
+                allInstalled = false
+                backend.log("[$TAG] $name failed: ${t.message}", t)
+            }
+        }
+
+        runHookGroup("hookGetUserProfiles") { hookGetUserProfiles(clazz) }
+        runHookGroup("hookUserManagerGetProfileIds") { hookUserManagerGetProfileIds(classLoader) }
+        runHookGroup("hookProfileAccessChecks") { hookProfileAccessChecks(clazz) }
+        runHookGroup("hookGetLauncherActivities") { hookGetLauncherActivities(clazz) }
+        runHookGroup("hookGetShortcuts") { hookGetShortcuts(clazz) }
+        runHookGroup("hookResolveAndEnabledChecks") { hookResolveAndEnabledChecks(clazz) }
+
+        if (allInstalled) {
+            backend.log("[$TAG] Successfully installed system hooks on $TARGET_CLASS (Android 11–17)")
+        } else {
+            backend.log("[$TAG] Installed system hooks on $TARGET_CLASS with partial group failures")
+        }
+        return allInstalled
     }
 
     @Volatile

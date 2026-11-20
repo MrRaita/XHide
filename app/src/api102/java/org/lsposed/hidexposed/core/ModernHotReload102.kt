@@ -63,18 +63,30 @@ internal object ModernHotReload102 {
             }
             val classLoader = param.oldHookHandles.firstOrNull()?.executable?.declaringClass?.classLoader
                 ?: module.requireSystemServerClassLoader()
-            LauncherHook.install(classLoader, replacementBackend)
-            if (handles.isNotEmpty()) {
-                throw IllegalStateException("API 102 hot reload left ${handles.size} unmatched hook(s): ${handles.keys.map { it.name }}")
+            val installedAll = LauncherHook.install(classLoader, replacementBackend)
+            if (!installedAll || handles.isNotEmpty()) {
+                throw IllegalStateException("API 102 hot reload incomplete: installedAll=$installedAll, unmatched=${handles.size}")
             }
             module.log(android.util.Log.INFO, "XHide", "[API 102] Successfully replaced and restored hooks via replaceHook")
         } catch (t: Throwable) {
             module.log(android.util.Log.ERROR, "XHide", "Hot reload hook restoration failed", t)
-            newHandles.forEach { runCatching { it.unhook() } }
-            handles.values.forEach { runCatching { it.unhook() } }
-            // Reinstalling with the API 101 backend is safer than leaving partial hooks behind.
-            runCatching { module.reinstallAfterHotReload() }
-                .onFailure { module.log(android.util.Log.ERROR, "XHide", "Fallback installation failed", it) }
+            val fallbackHandles = LinkedHashMap<java.lang.reflect.Executable, HookHandle>()
+            val recovered = runCatching {
+                module.reinstallAfterHotReload(fallbackHandles)
+            }.onFailure {
+                module.log(android.util.Log.ERROR, "XHide", "Fallback installation failed", it)
+            }.getOrDefault(false)
+
+            if (recovered) {
+                // Recovery succeeded: unhook the superseded partial replacements and old handles.
+                newHandles.forEach { runCatching { it.unhook() } }
+                handles.values.forEach { runCatching { it.unhook() } }
+            } else {
+                // Recovery failed: unhook newly registered fallback handles to avoid duplicate
+                // leaks, and preserve existing newHandles + handles so enforcement remains active.
+                fallbackHandles.values.forEach { runCatching { it.unhook() } }
+                module.log(android.util.Log.WARN, "XHide", "Retaining existing hooks to preserve privacy enforcement after recovery failure")
+            }
         } finally {
             module.resumeAfterHotReload()
         }
