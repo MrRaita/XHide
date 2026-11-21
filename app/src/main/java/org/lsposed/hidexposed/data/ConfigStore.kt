@@ -332,6 +332,38 @@ object ConfigStore {
     fun getWhitelist(): Set<String> = rules.whitelist
     fun getBlacklist(): Set<String> = rules.blacklist
 
+    fun getHiddenPackagesForUser(userId: Int, detectedModules: Set<String> = emptySet()): List<String> {
+        val r = rules
+        val prefix = "$userId:"
+        val result = LinkedHashSet<String>()
+
+        for (key in r.blacklist) {
+            when {
+                key.startsWith(prefix) -> result.add(key.substring(prefix.length))
+                !key.contains(':') -> result.add(key)
+            }
+        }
+
+        val autoHideActive = if (userId == 0) r.autoHide else (r.autoHide && r.autoHideClone)
+        if (autoHideActive) {
+            for (pkg in detectedModules) {
+                val uKey = userKey(userId, pkg)
+                if (!r.whitelist.contains(uKey) && !r.whitelist.contains(pkg)) {
+                    result.add(pkg)
+                }
+            }
+        }
+
+        for (key in r.whitelist) {
+            when {
+                key.startsWith(prefix) -> result.remove(key.substring(prefix.length))
+                !key.contains(':') -> result.remove(key)
+            }
+        }
+
+        return result.toList()
+    }
+
     /**
      * Parses a persisted or IPC config object into a [HideRules] snapshot, enforcing entry limits,
      * key validation, and the "Hide XHide Icon" self-whitelist rule.

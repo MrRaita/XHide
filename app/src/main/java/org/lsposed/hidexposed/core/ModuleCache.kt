@@ -308,6 +308,21 @@ object ModuleCache {
         return false
     }
 
+    fun getDetectedModulePackages(): Set<String> {
+        val result = mutableSetOf<String>()
+        synchronized(apkModuleCache) {
+            for ((key, isModule) in apkModuleCache) {
+                if (isModule) {
+                    val pkg = key.substringBefore('|')
+                    if (pkg.isNotEmpty()) {
+                        result.add(pkg)
+                    }
+                }
+            }
+        }
+        return result
+    }
+
     fun clearCache() {
         apkModuleCache.clear()
     }

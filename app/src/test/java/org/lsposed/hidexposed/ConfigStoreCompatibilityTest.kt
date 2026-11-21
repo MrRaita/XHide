@@ -229,4 +229,31 @@ class ConfigStoreCompatibilityTest {
         assertTrue(ConfigStore.prepareForHotReload())
         ConfigStore.resumeAfterHotReload()
     }
+
+    @Test
+    fun testHiddenPackagesForUserWithProfilesAndModules() {
+        val payload = JSONObject().apply {
+            put("autoHide", true)
+            put("autoHideClone", false)
+            put("blacklist", JSONArray(listOf("0:com.pkg.user0", "10:com.pkg.user10", "com.pkg.all")))
+            put("whitelist", JSONArray(listOf("0:org.lsposed.hidexposed", "0:com.pkg.whitelisted")))
+        }.toString()
+        assertNotNull(ConfigStore.applySystemIpcUpdate(payload))
+
+        val detectedModules = setOf("com.module.one", "com.pkg.whitelisted")
+
+        val user0Hidden = ConfigStore.getHiddenPackagesForUser(0, detectedModules)
+        assertTrue(user0Hidden.contains("com.pkg.user0"))
+        assertTrue(user0Hidden.contains("com.pkg.all"))
+        assertTrue(user0Hidden.contains("com.module.one"))
+        assertFalse(user0Hidden.contains("com.pkg.user10"))
+        assertFalse(user0Hidden.contains("com.pkg.whitelisted"))
+        assertFalse(user0Hidden.contains("org.lsposed.hidexposed"))
+
+        val user10Hidden = ConfigStore.getHiddenPackagesForUser(10, detectedModules)
+        assertTrue(user10Hidden.contains("com.pkg.user10"))
+        assertTrue(user10Hidden.contains("com.pkg.all"))
+        assertFalse(user10Hidden.contains("com.pkg.user0"))
+        assertFalse(user10Hidden.contains("com.module.one"))
+    }
 }

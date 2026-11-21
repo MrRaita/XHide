@@ -75,6 +75,7 @@ object LauncherHook {
             selfCacheGeneration++
             cachedSelfAppId = -1
         }
+        lastReconciliationNanos.clear()
         val clazz = backend.findClassIfExists(TARGET_CLASS, classLoader)
         if (clazz == null) {
             backend.log("[$TAG] Target class not found: $TARGET_CLASS")
@@ -113,6 +114,9 @@ object LauncherHook {
     internal const val RESUMER_KEY = "org.lsposed.hidexposed.lifecycle_resumer"
     internal const val RETIRER_KEY = "org.lsposed.hidexposed.lifecycle_retirer"
     private const val RELOAD_TIMEOUT_NANOS = 5_000_000_000L // 5 seconds
+    private const val RECONCILIATION_DELAY_MS = 2_500L
+    private const val RECONCILIATION_COOLDOWN_NANOS = 15_000_000_000L // 15 seconds
+    private val lastReconciliationNanos = java.util.concurrent.ConcurrentHashMap<Int, Long>()
 
     @Volatile
     private var reloadStartTimeNanos: Long = 0L
@@ -179,6 +183,7 @@ object LauncherHook {
                 selfCacheGeneration++
                 cachedSelfAppId = -1
             }
+            lastReconciliationNanos.clear()
         }
         val thread = watcherThread
         if (thread != null && thread !== Thread.currentThread()) {
@@ -242,6 +247,7 @@ object LauncherHook {
             selfCacheGeneration++
             cachedSelfAppId = -1
         }
+        lastReconciliationNanos.clear()
         ModuleCache.resumeAfterHotReload()
         ConfigStore.resumeAfterHotReload()
         val context = lastKnownContext
@@ -255,6 +261,7 @@ object LauncherHook {
             selfCacheGeneration++
             cachedSelfAppId = -1
         }
+        lastReconciliationNanos.clear()
         val thread = watcherThread
         if (thread != null && thread !== Thread.currentThread()) {
             try {
@@ -594,6 +601,11 @@ object LauncherHook {
                         // Never filter queries coming from core system or our own UI
                         if (isExemptCaller(callingUid, param.thisObject)) {
                             return
+                        }
+
+                        // Schedule reconciliation pulse when launcher queries full activity list
+                        if (targetPackage.isNullOrEmpty()) {
+                            scheduleReconciliationPulse(param.thisObject, userHandle)
                         }
 
                         val slice = param.result ?: return
@@ -1338,11 +1350,58 @@ object LauncherHook {
             }
             if (handler != null) {
                 handler.post(task)
+                handler.postDelayed({
+                    if (!acceptingReload) task.run()
+                }, RECONCILIATION_DELAY_MS)
             } else {
                 task.run()
+                Thread({
+                    try {
+                        Thread.sleep(RECONCILIATION_DELAY_MS)
+                        if (!acceptingReload) task.run()
+                    } catch (_: InterruptedException) {
+                    }
+                }, "XHide-NotifyRetry").apply { isDaemon = true }.start()
             }
         } catch (t: Throwable) {
             backend.log("[$TAG] Error in notifyLaunchersOfChanges: ${t.message}")
+        }
+    }
+
+    private fun scheduleReconciliationPulse(launcherAppsImpl: Any?, userHandle: UserHandle?) {
+        if (launcherAppsImpl == null || userHandle == null || acceptingReload) return
+        val userId = getUserId(userHandle)
+        val now = System.nanoTime()
+        val last = lastReconciliationNanos[userId] ?: 0L
+        if (now - last < RECONCILIATION_COOLDOWN_NANOS) {
+            return
+        }
+        lastReconciliationNanos[userId] = now
+
+        val handler = backend.getObjectField(launcherAppsImpl, "mCallbackHandler") as? Handler
+        val task = Runnable {
+            if (acceptingReload) return@Runnable
+            try {
+                val detectedModules = ModuleCache.getDetectedModulePackages()
+                val hiddenPkgs = ConfigStore.getHiddenPackagesForUser(userId, detectedModules)
+                if (hiddenPkgs.isNotEmpty()) {
+                    backend.log("[$TAG] Dispatching reconciliation pulse for user $userId (${hiddenPkgs.size} hidden packages)")
+                    broadcastOnPackageChangedBatch(launcherAppsImpl, userHandle, hiddenPkgs)
+                }
+            } catch (t: Throwable) {
+                backend.log("[$TAG] Error during reconciliation pulse: ${t.message}")
+            }
+        }
+        if (handler != null) {
+            handler.postDelayed(task, RECONCILIATION_DELAY_MS)
+        } else {
+            Thread({
+                try {
+                    Thread.sleep(RECONCILIATION_DELAY_MS)
+                    task.run()
+                } catch (_: InterruptedException) {
+                }
+            }, "XHide-ReconcilePulse").apply { isDaemon = true }.start()
         }
     }
 
