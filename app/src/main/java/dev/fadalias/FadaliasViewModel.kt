@@ -116,6 +116,9 @@ class FadaliasViewModel(application: Application) : AndroidViewModel(application
     var hideShareTargets: Boolean
         get() = store.state.hideShareTargets.also { changes }
         set(v) { apply(listOf(Op.Auto(null, null, hideShareTargets = v))) }
+    var hideWidgets: Boolean
+        get() = store.state.hideWidgets.also { changes }
+        set(v) { apply(listOf(Op.Auto(null, null, hideWidgets = v))) }
 
     /** Reading this inside a getter makes Compose recompose when the store changes. */
     private var changes by mutableStateOf(0L)

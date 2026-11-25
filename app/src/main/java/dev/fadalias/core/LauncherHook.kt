@@ -1,5 +1,6 @@
 package dev.fadalias.core
 
+import android.appwidget.AppWidgetProviderInfo
 import android.content.ComponentName
 import android.content.Intent
 import android.content.IntentFilter
@@ -66,7 +67,7 @@ object LauncherHook {
         h.group("profiles") { hookGetUserProfiles(h, clazz); hookUserManagerGetProfileIds(h, classLoader); hookProfileAccessChecks(h, clazz) }
         h.group("launcherActivities") { hookGetLauncherActivities(h, clazz) }
         if (hideSupported) {
-            h.group("shortcuts") { hookGetShortcuts(h, clazz); hookShortcutService(h, classLoader) }
+            h.group("shortcuts") { hookGetShortcuts(h, clazz); hookShortcutService(h, classLoader); hookAppWidgets(h, classLoader) }
             h.group("resolve") { hookResolveAndEnabledChecks(h, clazz); hookQueryIntentActivities(h, classLoader) }
         }
         if (android.os.Build.VERSION.SDK_INT >= 34) {
@@ -459,6 +460,54 @@ object LauncherHook {
         }
         h.optional("ShortcutService.getShortcuts", ss, "getShortcuts", String::class.java, INT, INT, cb = shortcutCb(HideScope.SHORTCUTS))
         h.optional("ShortcutService.getShareTargets", ss, "getShareTargets", String::class.java, IntentFilter::class.java, INT, cb = shortcutCb(HideScope.SHARE_TARGETS))
+    }
+
+    private fun hookAppWidgets(h: Hooks, classLoader: ClassLoader) {
+        val aws = h.be.findClassIfExists("com.android.server.appwidget.AppWidgetServiceImpl", classLoader)
+        if (aws == null) {
+            HealthLog.hook("AppWidgetServiceImpl", HealthLog.MISSING)
+            return
+        }
+        h.optional("AppWidgetService.getInstalledProvidersForProfile", aws, "getInstalledProvidersForProfile",
+            INT, INT, String::class.java, cb = object : HookCallback() {
+                override fun after(param: HookParam) {
+                    try {
+                        val slice = param.result ?: return
+                        val snap = StateStore.snapshot
+                        if (!snap.mayHideAnything()) return
+                        if (Callers.isExempt(Binder.getCallingUid(), null)) return
+                        val raw = Slices.list(slice) ?: return
+                        if (raw.isEmpty()) return
+                        val profileId = (param.args[1] as? Int) ?: 0
+                        val be = Runtime.be()
+                        var kept: ArrayList<Any>? = null
+                        for (i in raw.indices) {
+                            val item = raw[i] ?: continue
+                            val info = item as? AppWidgetProviderInfo
+                            val pkg = info?.provider?.packageName
+                            val userId = info?.profile?.let { userIdOf(it, be) } ?: profileId
+                            val hidden = pkg != null && snap.shouldHideScope(
+                                pkg,
+                                userId,
+                                ModuleCache.isXposedModule(pkg, null, null, info.profile, be),
+                                HideScope.WIDGETS,
+                            )
+                            if (hidden) {
+                                if (kept == null) {
+                                    kept = ArrayList<Any>(raw.size).apply {
+                                        for (j in 0 until i) raw[j]?.let(::add)
+                                    }
+                                }
+                            } else {
+                                kept?.add(item)
+                            }
+                        }
+                        if (kept != null) param.setResult(Slices.rebuild(slice, kept))
+                    } catch (t: Throwable) {
+                        HealthLog.event("AppWidgetService hook failed", t)
+                    }
+                }
+            })
     }
 
     // ---- resolve / enabled / suggestions: hiding for every other entry point ---------------------------------------

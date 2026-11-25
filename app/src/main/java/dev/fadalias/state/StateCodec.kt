@@ -66,6 +66,7 @@ object StateCodec {
             put("hideShortcuts", d.hideShortcuts)
             put("hideShortcutConfigs", d.hideShortcutConfigs)
             put("hideShareTargets", d.hideShareTargets)
+            put("hideWidgets", d.hideWidgets)
             put("hide", hide)
             if (d.hideScopes.isNotEmpty()) {
                 val hs = JSONObject()
@@ -191,6 +192,7 @@ object StateCodec {
                 hideShortcuts = o.optBoolean("hideShortcuts", true),
                 hideShortcutConfigs = o.optBoolean("hideShortcutConfigs", true),
                 hideShareTargets = o.optBoolean("hideShareTargets", true),
+                hideWidgets = o.optBoolean("hideWidgets", true),
                 hide = hide,
                 hideScopes = hideScopes,
                 apps = apps,
@@ -220,6 +222,7 @@ object Canonical {
             .append('|').append(d.hideShortcuts)
             .append('|').append(d.hideShortcutConfigs)
             .append('|').append(d.hideShareTargets)
+            .append('|').append(d.hideWidgets)
             .append('\n')
         for (user in d.hide.keys.sorted()) {
             val m = d.hide.getValue(user)

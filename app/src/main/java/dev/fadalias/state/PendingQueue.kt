@@ -25,6 +25,7 @@ object PendingQueue {
                     op.hideShortcuts ?: prev?.hideShortcuts,
                     op.hideShortcutConfigs ?: prev?.hideShortcutConfigs,
                     op.hideShareTargets ?: prev?.hideShareTargets,
+                    op.hideWidgets ?: prev?.hideWidgets,
                 ))
             }
             is Op.Forget -> {

@@ -19,6 +19,7 @@ sealed class Op {
         val hideShortcuts: Boolean? = null,
         val hideShortcutConfigs: Boolean? = null,
         val hideShareTargets: Boolean? = null,
+        val hideWidgets: Boolean? = null,
     ) : Op()
     data class Forget(val pkg: String) : Op()
     /** Ask the hook to re-apply and re-announce [pkgs] ([force] also rebuilds their overlays). */
@@ -52,6 +53,7 @@ object OpCodec {
                 op.hideShortcuts?.let { put("sc", it) }
                 op.hideShortcutConfigs?.let { put("cfg", it) }
                 op.hideShareTargets?.let { put("st", it) }
+                op.hideWidgets?.let { put("w", it) }
             }
             is Op.Forget -> { put("k", "f"); put("p", op.pkg) }
             is Op.Refresh -> { put("k", "r"); put("p", JSONArray(op.pkgs)); put("f", op.force) }
@@ -113,6 +115,7 @@ object OpCodec {
             if (o.has("sc")) o.getBoolean("sc") else null,
             if (o.has("cfg")) o.getBoolean("cfg") else null,
             if (o.has("st")) o.getBoolean("st") else null,
+            if (o.has("w")) o.getBoolean("w") else null,
         )
         "f" -> o.getString("p").takeIf { Pkg.isValid(it) }?.let { Op.Forget(it) }
         "r" -> {
