@@ -24,5 +24,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Fadalias"
+rootProject.name = "HFW"
 include(":app")

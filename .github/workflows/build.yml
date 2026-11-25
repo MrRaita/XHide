@@ -36,7 +36,7 @@ jobs:
           cp ~/.android/debug.keystore ~/.config/.android/debug.keystore
 
       - name: Run Unit Tests & Build Release/Debug APKs
-        run: ./gradlew test assembleRelease assembleDebug
+        run: ./gradlew --no-configuration-cache test assembleRelease assembleDebug
 
       - name: Prepare Named APKs
         run: |
@@ -47,13 +47,13 @@ jobs:
             VERSION_TAG="v${RAW_VER}"
           fi
           echo "Packaging version: $VERSION_TAG"
-          cp app/build/outputs/apk/release/app-release.apk "dist/Fadalias-${VERSION_TAG}-release.apk"
-          cp app/build/outputs/apk/debug/app-debug.apk "dist/Fadalias-${VERSION_TAG}-debug.apk"
+          cp app/build/outputs/apk/release/app-release.apk "dist/HFW-${VERSION_TAG}-release.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/HFW-${VERSION_TAG}-debug.apk"
 
-      - name: Upload Fadalias APK Artifacts
+      - name: Upload HFW APK Artifacts
         uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
         with:
-          name: Fadalias-apks
+          name: HFW-apks
           path: dist/*.apk
 
   release:
@@ -66,10 +66,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - name: Download Fadalias APK Artifacts
+      - name: Download HFW APK Artifacts
         uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
         with:
-          name: Fadalias-apks
+          name: HFW-apks
           path: dist
 
       - name: Publish GitHub Release on Tag
@@ -77,5 +77,5 @@ jobs:
         with:
           files: dist/*.apk
           body_path: RELEASE_NOTES_DRAFT.md
-          name: Fadalias ${{ github.ref_name }}
+          name: HFW ${{ github.ref_name }}
           generate_release_notes: false
