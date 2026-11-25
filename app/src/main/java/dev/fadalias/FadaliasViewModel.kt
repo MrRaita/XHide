@@ -191,7 +191,7 @@ class FadaliasViewModel(application: Application) : AndroidViewModel(application
                 customLabel = customLabel,
                 iconRev = if (Caps.icon) want else 0L,
                 iconStatus = if (want > 0 && h != null && h.overlayRev == want) h.overlayStatus else if (want > 0 && h != null && h.overlayStatus != Overlay.OK) h.overlayStatus else Overlay.NONE,
-                hidden = Caps.hide && s.shouldHide(e.pkg, e.userId, e.isModule),
+                hidden = Caps.hide && s.effectiveHideMask(e.pkg, e.userId, e.isModule) != 0,
                 lookProtected = Pkg.isProtectedForLook(e.pkg),
                 lookRisky = e.isSystem || Pkg.isRiskyForLook(e.pkg),
                 modified = customLabel != null || (Caps.icon && want > 0) || (Caps.hide && s.hide[e.userId]?.containsKey(e.pkg) == true),
@@ -265,9 +265,28 @@ class FadaliasViewModel(application: Application) : AndroidViewModel(application
     fun setHidden(item: AppItem, hidden: Boolean) {
         val s = store.state
         val default = StateData(autoHide = s.autoHide, autoHideClone = s.autoHideClone).shouldHide(item.pkg, item.userId, item.isModule)
-        if (apply(listOf(Op.Hide(item.userId, item.pkg, if (hidden == default) null else hidden)))) {
+        if (apply(listOf(Op.Hide(item.userId, item.pkg, if (hidden == default) null else hidden), Op.HideScope(item.userId, item.pkg, null)))) {
             log(if (hidden) ActivityKind.HIDDEN else ActivityKind.UNHIDDEN, item)
         }
+    }
+
+    fun hideScopeOf(item: AppItem): Int {
+        changes
+        return store.state.effectiveHideMask(item.pkg, item.userId, item.isModule)
+    }
+
+    fun hasCustomHideScope(item: AppItem): Boolean {
+        changes
+        return store.state.hideScopes[item.userId]?.containsKey(item.pkg) == true
+    }
+
+    fun setHideScope(item: AppItem, mask: Int?) {
+        apply(listOf(Op.HideScope(item.userId, item.pkg, mask)))
+    }
+
+    fun toggleHideScope(item: AppItem, flag: Int) {
+        val current = store.state.effectiveHideMask(item.pkg, item.userId, item.isModule)
+        setHideScope(item, current xor flag)
     }
 
     private fun addSingleProfileNameResetOps(item: AppItem, ops: MutableList<Op>) {

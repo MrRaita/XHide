@@ -31,6 +31,16 @@ data class AppRule(
  * [hide] is a nested map by user id: package -> explicit choice (true = hidden, false = shown). No entry means the
  * default applies (Xposed modules are auto-hidden when [autoHide] is on).
  */
+object HideScope {
+    const val LAUNCHER = 1 shl 0
+    const val SUGGESTIONS = 1 shl 1
+    const val SHORTCUT_CONFIGS = 1 shl 2
+    const val SHORTCUTS = 1 shl 3
+    const val INTENT_CHOOSER = 1 shl 4
+    const val SHARE_TARGETS = 1 shl 5
+    const val ALL = LAUNCHER or SUGGESTIONS or SHORTCUT_CONFIGS or SHORTCUTS or INTENT_CHOOSER or SHARE_TARGETS
+}
+
 data class StateData(
     val rev: Long = 0L,
     val autoHide: Boolean = true,
@@ -40,6 +50,7 @@ data class StateData(
     val hideShortcutConfigs: Boolean = true,
     val hideShareTargets: Boolean = true,
     val hide: Map<Int, Map<String, Boolean>> = emptyMap(),
+    val hideScopes: Map<Int, Map<String, Int>> = emptyMap(),
     val apps: Map<String, AppRule> = emptyMap(),
     val labels: Map<Int, Map<String, String>> = emptyMap(),
     val icons: Map<Int, Map<String, AppRule>> = emptyMap(),
@@ -52,12 +63,41 @@ data class StateData(
         return if (userId == 0) autoHide else autoHide && autoHideClone
     }
 
-    /** Packages hidden for [userId], given the modules detected so far. */
+    fun defaultHideMask(): Int {
+        var mask = HideScope.LAUNCHER or HideScope.SUGGESTIONS
+        if (hideShortcutConfigs) mask = mask or HideScope.SHORTCUT_CONFIGS
+        if (hideShortcuts) mask = mask or HideScope.SHORTCUTS
+        if (hideIntentChooser) mask = mask or HideScope.INTENT_CHOOSER
+        if (hideShareTargets) mask = mask or HideScope.SHARE_TARGETS
+        return mask
+    }
+
+    fun effectiveHideMask(pkg: String, userId: Int, isModule: Boolean): Int {
+        hideScopes[userId]?.get(pkg)?.let { return it }
+        return if (shouldHide(pkg, userId, isModule)) defaultHideMask() else 0
+    }
+
+    fun shouldHideScope(pkg: String, userId: Int, isModule: Boolean, scope: Int): Boolean {
+        val explicitMask = hideScopes[userId]?.get(pkg)
+        if (explicitMask != null) return (explicitMask and scope) != 0
+        val globalAllowed = when (scope) {
+            HideScope.INTENT_CHOOSER -> hideIntentChooser
+            HideScope.SHORTCUTS -> hideShortcuts
+            HideScope.SHORTCUT_CONFIGS -> hideShortcutConfigs
+            HideScope.SHARE_TARGETS -> hideShareTargets
+            else -> true
+        }
+        return globalAllowed && shouldHide(pkg, userId, isModule)
+    }
+
+    /** Packages hidden from the launcher for [userId], given the modules detected so far. */
     fun hiddenFor(userId: Int, detectedModules: Set<String>): List<String> {
         val out = LinkedHashSet<String>()
+        val scoped = hideScopes[userId].orEmpty()
+        for ((pkg, mask) in scoped) if ((mask and HideScope.LAUNCHER) != 0) out.add(pkg)
         val explicit = hide[userId].orEmpty()
-        for ((pkg, h) in explicit) if (h) out.add(pkg)
-        for (pkg in detectedModules) if (pkg !in explicit && shouldHide(pkg, userId, true)) out.add(pkg)
+        for ((pkg, h) in explicit) if (h && pkg !in scoped) out.add(pkg)
+        for (pkg in detectedModules) if (pkg !in scoped && pkg !in explicit && shouldHide(pkg, userId, true)) out.add(pkg)
         return out.toList()
     }
 

@@ -67,6 +67,17 @@ object StateCodec {
             put("hideShortcutConfigs", d.hideShortcutConfigs)
             put("hideShareTargets", d.hideShareTargets)
             put("hide", hide)
+            if (d.hideScopes.isNotEmpty()) {
+                val hs = JSONObject()
+                for (user in d.hideScopes.keys.sorted()) {
+                    val m = d.hideScopes.getValue(user)
+                    if (m.isEmpty()) continue
+                    val o = JSONObject()
+                    for (pkg in m.keys.sorted()) o.put(pkg, m.getValue(pkg))
+                    hs.put(user.toString(), o)
+                }
+                if (hs.length() > 0) put("hideScopes", hs)
+            }
             if (labels.length() > 0) put("labels", labels)
             if (icons.length() > 0) put("icons", icons)
             put("apps", apps)
@@ -154,6 +165,24 @@ object StateCodec {
                 }
                 if (m.isNotEmpty()) icons[user] = m
             }
+            val hideScopes = LinkedHashMap<Int, Map<String, Int>>()
+            var hsCount = 0
+            val hso = o.optJSONObject("hideScopes")
+            if (hso != null) for (key in hso.keys()) {
+                val user = key.toIntOrNull()
+                if (user == null || user < 0 || user > Limits.MAX_USER_ID) { if (strict) return null else continue }
+                val uo = hso.optJSONObject(key)
+                if (uo == null) { if (strict) return null else continue }
+                val m = LinkedHashMap<String, Int>()
+                for (pkg in uo.keys()) {
+                    if (!Pkg.isValid(pkg)) { if (strict) return null else continue }
+                    if (++hsCount > Limits.MAX_PACKAGES) { if (strict) return null else break }
+                    val mask = uo.optInt(pkg, -1)
+                    if (mask < 0 || mask > HideScope.ALL) { if (strict) return null else continue }
+                    m[pkg] = mask
+                }
+                if (m.isNotEmpty()) hideScopes[user] = m
+            }
             StateData(
                 rev = o.optLong("rev", 0L).coerceAtLeast(0L),
                 autoHide = o.optBoolean("autoHide", true),
@@ -163,6 +192,7 @@ object StateCodec {
                 hideShortcutConfigs = o.optBoolean("hideShortcutConfigs", true),
                 hideShareTargets = o.optBoolean("hideShareTargets", true),
                 hide = hide,
+                hideScopes = hideScopes,
                 apps = apps,
                 labels = labels,
                 icons = icons,
@@ -194,6 +224,10 @@ object Canonical {
         for (user in d.hide.keys.sorted()) {
             val m = d.hide.getValue(user)
             for (pkg in m.keys.sorted()) sb.append("H|").append(user).append('|').append(pkg).append('|').append(m.getValue(pkg)).append('\n')
+        }
+        for (user in d.hideScopes.keys.sorted()) {
+            val m = d.hideScopes.getValue(user)
+            for (pkg in m.keys.sorted()) sb.append("HS|").append(user).append('|').append(pkg).append('|').append(m.getValue(pkg)).append('\n')
         }
         for (pkg in d.apps.keys.sorted()) {
             val r = d.apps.getValue(pkg)

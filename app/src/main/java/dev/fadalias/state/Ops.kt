@@ -7,6 +7,8 @@ import org.json.JSONObject
 sealed class Op {
     /** [hide] null clears the explicit choice for this user (the default applies again). */
     data class Hide(val user: Int, val pkg: String, val hide: Boolean?) : Op()
+    /** [mask] null clears the per-app scope mask so the normal hide toggle applies. */
+    data class HideScope(val user: Int, val pkg: String, val mask: Int?) : Op()
     data class Name(val pkg: String, val label: String?, val user: Int? = null) : Op()
     /** [rev] 0 removes the custom icon. */
     data class Icon(val pkg: String, val rev: Long, val user: Int? = null) : Op()
@@ -39,6 +41,7 @@ object OpCodec {
     private fun encodeOp(op: Op): JSONObject = JSONObject().apply {
         when (op) {
             is Op.Hide -> { put("k", "h"); put("u", op.user); put("p", op.pkg); op.hide?.let { put("v", it) } }
+            is Op.HideScope -> { put("k", "hs"); put("u", op.user); put("p", op.pkg); op.mask?.let { put("m", it) } }
             is Op.Name -> { put("k", "n"); put("p", op.pkg); op.label?.let { put("v", it) }; op.user?.let { put("u", it) } }
             is Op.Icon -> { put("k", "i"); put("p", op.pkg); put("r", op.rev); op.user?.let { put("u", it) } }
             is Op.Auto -> {
@@ -85,6 +88,13 @@ object OpCodec {
             val user = o.getInt("u")
             if (!Pkg.isValid(pkg) || user < 0 || user > Limits.MAX_USER_ID) null
             else Op.Hide(user, pkg, if (o.has("v")) o.getBoolean("v") else null)
+        }
+        "hs" -> {
+            val pkg = o.getString("p")
+            val user = o.getInt("u")
+            val mask = if (o.has("m")) o.getInt("m") else null
+            if (!Pkg.isValid(pkg) || user < 0 || user > Limits.MAX_USER_ID || (mask != null && (mask < 0 || mask > dev.fadalias.state.HideScope.ALL))) null
+            else Op.HideScope(user, pkg, mask)
         }
         "n" -> o.getString("p").takeIf { Pkg.isValid(it) }?.let { pkg ->
             val user = if (o.has("u")) o.getInt("u") else null

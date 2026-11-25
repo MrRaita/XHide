@@ -13,6 +13,7 @@ object PendingQueue {
         fun put(k: String, op: Op) { m.remove(k); m[k] = op }
         for (op in ops) when (op) {
             is Op.Hide -> put("h:${op.user}:${op.pkg}", op)
+            is Op.HideScope -> put("hs:${op.user}:${op.pkg}", op)
             is Op.Name -> put("n:${op.user ?: "*"}:${op.pkg}", op)
             is Op.Icon -> put("i:${op.user ?: "*"}:${op.pkg}", op)
             is Op.Auto -> {
@@ -29,7 +30,7 @@ object PendingQueue {
             is Op.Forget -> {
                 val suffix = ":${op.pkg}"
                 m.keys.removeAll {
-                    ((it.startsWith("h:") || it.startsWith("n:") || it.startsWith("i:")) && it.endsWith(suffix)) ||
+                    ((it.startsWith("h:") || it.startsWith("hs:") || it.startsWith("n:") || it.startsWith("i:")) && it.endsWith(suffix)) ||
                         it == "f:${op.pkg}"
                 }
                 put("f:${op.pkg}", op)

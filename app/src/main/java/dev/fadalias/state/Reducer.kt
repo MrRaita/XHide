@@ -17,6 +17,8 @@ object Reducer {
     fun reduce(base: StateData, ops: List<Op>, now: Long): Result {
         val hide = LinkedHashMap<Int, MutableMap<String, Boolean>>()
         for ((u, m) in base.hide) hide[u] = LinkedHashMap(m)
+        val hideScopes = LinkedHashMap<Int, MutableMap<String, Int>>()
+        for ((u, m) in base.hideScopes) hideScopes[u] = LinkedHashMap(m)
         val labels = LinkedHashMap<Int, MutableMap<String, String>>()
         for ((u, m) in base.labels) labels[u] = LinkedHashMap(m)
         val icons = LinkedHashMap<Int, MutableMap<String, AppRule>>()
@@ -54,6 +56,11 @@ object Reducer {
                 if (op.hide == null) m.remove(op.pkg) else m[op.pkg] = op.hide
                 if (m.isEmpty()) hide.remove(op.user)
             }
+            is Op.HideScope -> {
+                val m = hideScopes.getOrPut(op.user) { LinkedHashMap() }
+                if (op.mask == null) m.remove(op.pkg) else m[op.pkg] = op.mask and HideScope.ALL
+                if (m.isEmpty()) hideScopes.remove(op.user)
+            }
             is Op.Name -> if (!Pkg.isProtectedForLook(op.pkg)) {
                 val label = op.label?.trim()?.takeIf { it.isNotEmpty() }?.take(Limits.MAX_LABEL)
                 if (op.user != null) {
@@ -84,6 +91,8 @@ object Reducer {
             is Op.Forget -> {
                 for (m in hide.values) m.remove(op.pkg)
                 hide.values.removeAll { it.isEmpty() }
+                for (m in hideScopes.values) m.remove(op.pkg)
+                hideScopes.values.removeAll { it.isEmpty() }
                 for (m in labels.values) m.remove(op.pkg)
                 labels.values.removeAll { it.isEmpty() }
                 for (m in icons.values) m.remove(op.pkg)
@@ -97,6 +106,8 @@ object Reducer {
             is Op.Replace -> {
                 hide.clear()
                 for ((u, m) in op.data.hide) if (m.isNotEmpty()) hide[u] = LinkedHashMap(m)
+                hideScopes.clear()
+                for ((u, m) in op.data.hideScopes) if (m.isNotEmpty()) hideScopes[u] = LinkedHashMap(m)
                 labels.clear()
                 for ((u, m) in op.data.labels) {
                     val clean = m.filterKeys { !Pkg.isProtectedForLook(it) }
@@ -174,6 +185,7 @@ object Reducer {
             hideShortcutConfigs,
             hideShareTargets,
             hide.mapValues { it.value.toMap() },
+            hideScopes.mapValues { it.value.toMap() },
             apps,
             labels.mapValues { it.value.toMap() },
             icons.mapValues { it.value.toMap() },
@@ -213,6 +225,11 @@ class Diff(
             for (u in old.hide.keys + new.hide.keys) {
                 val a = old.hide[u].orEmpty()
                 val b = new.hide[u].orEmpty()
+                for (p in a.keys + b.keys) if (a[p] != b[p]) hide.add(u to p)
+            }
+            for (u in old.hideScopes.keys + new.hideScopes.keys) {
+                val a = old.hideScopes[u].orEmpty()
+                val b = new.hideScopes[u].orEmpty()
                 for (p in a.keys + b.keys) if (a[p] != b[p]) hide.add(u to p)
             }
             val nameUsers = LinkedHashSet<Pair<Int, String>>()

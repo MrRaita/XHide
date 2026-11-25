@@ -13,6 +13,7 @@ import android.os.Bundle
 import android.os.Process
 import android.os.UserHandle
 import dev.fadalias.Identity
+import dev.fadalias.state.HideScope
 import dev.fadalias.state.Overlay
 
 /**
@@ -258,7 +259,7 @@ object LauncherHook {
             val pkg = ai?.packageName ?: target
             if (hideSupported && role != Role.SYSTEM && !pkg.isNullOrEmpty()) {
                 val isModule = ModuleCache.isXposedModule(pkg, ai?.applicationInfo, ctx, user, be)
-                if (snap.shouldHide(pkg, userId, isModule)) {
+                if (snap.shouldHideScope(pkg, userId, isModule, HideScope.LAUNCHER)) {
                     modified = true
                     continue
                 }
@@ -363,7 +364,7 @@ object LauncherHook {
     // ---- shortcuts -------------------------------------------------------------------------------------------------
 
     private fun dev.fadalias.state.StateData.mayHideAnything(): Boolean =
-        autoHide || hide.values.any { it.containsValue(true) }
+        autoHide || hide.values.any { it.containsValue(true) } || hideScopes.values.any { it.values.any { m -> m != 0 } }
 
     private fun dev.fadalias.state.StateData.mayCustomizeLooks(): Boolean =
         apps.isNotEmpty() || labels.isNotEmpty() || icons.isNotEmpty()
@@ -373,11 +374,11 @@ object LauncherHook {
         user: UserHandle?,
         userId: Int,
         fallbackPkg: String? = null,
-        enabled: (dev.fadalias.state.StateData) -> Boolean,
+        scope: Int,
     ) {
         val slice = param.result ?: return
         val snap = StateStore.snapshot
-        if (!enabled(snap) || !snap.mayHideAnything()) return
+        if (!snap.mayHideAnything()) return
         val impl = param.thisObject
         if (Callers.isExempt(Binder.getCallingUid(), impl)) return
         val raw = Slices.list(slice) ?: return
@@ -393,7 +394,7 @@ object LauncherHook {
                 ?: fallbackPkg
                 ?: (try { (be.callMethod(item, "getTargetComponent") as? ComponentName)?.packageName } catch (_: Throwable) { null })
             val hidden = !pkg.isNullOrEmpty() &&
-                snap.shouldHide(pkg, userId, ModuleCache.isXposedModule(pkg, ai?.applicationInfo, ctx, user, be))
+                snap.shouldHideScope(pkg, userId, ModuleCache.isXposedModule(pkg, ai?.applicationInfo, ctx, user, be), scope)
             if (hidden) {
                 if (kept == null) {
                     kept = ArrayList<Any>(raw.size).apply {
@@ -412,7 +413,7 @@ object LauncherHook {
             override fun after(param: HookParam) {
                 try {
                     val user = param.args.lastOrNull() as? UserHandle
-                    filterSliceByPackage(param, user, userIdOf(user, Runtime.be()), enabled = { it.hideShortcuts })
+                    filterSliceByPackage(param, user, userIdOf(user, Runtime.be()), scope = HideScope.SHORTCUTS)
                 } catch (t: Throwable) {
                     HealthLog.event("getShortcuts hook failed", t)
                 }
@@ -432,7 +433,7 @@ object LauncherHook {
                 override fun after(param: HookParam) {
                     try {
                         val user = param.args[2] as? UserHandle
-                        filterSliceByPackage(param, user, userIdOf(user, Runtime.be()), param.args[1] as? String, enabled = { it.hideShortcutConfigs })
+                        filterSliceByPackage(param, user, userIdOf(user, Runtime.be()), param.args[1] as? String, scope = HideScope.SHORTCUT_CONFIGS)
                     } catch (t: Throwable) {
                         HealthLog.event("getShortcutConfigActivities hook failed", t)
                     }
@@ -446,18 +447,18 @@ object LauncherHook {
             HealthLog.hook("ShortcutService", HealthLog.MISSING)
             return
         }
-        fun shortcutCb(enabled: (dev.fadalias.state.StateData) -> Boolean) = object : HookCallback() {
+        fun shortcutCb(scope: Int) = object : HookCallback() {
             override fun after(param: HookParam) {
                 try {
                     val userId = (param.args.lastOrNull() as? Int) ?: return
-                    filterSliceByPackage(param, null, userId, enabled = enabled)
+                    filterSliceByPackage(param, null, userId, scope = scope)
                 } catch (t: Throwable) {
                     HealthLog.event("ShortcutService hook failed", t)
                 }
             }
         }
-        h.optional("ShortcutService.getShortcuts", ss, "getShortcuts", String::class.java, INT, INT, cb = shortcutCb { it.hideShortcuts })
-        h.optional("ShortcutService.getShareTargets", ss, "getShareTargets", String::class.java, IntentFilter::class.java, INT, cb = shortcutCb { it.hideShareTargets })
+        h.optional("ShortcutService.getShortcuts", ss, "getShortcuts", String::class.java, INT, INT, cb = shortcutCb(HideScope.SHORTCUTS))
+        h.optional("ShortcutService.getShareTargets", ss, "getShareTargets", String::class.java, IntentFilter::class.java, INT, cb = shortcutCb(HideScope.SHARE_TARGETS))
     }
 
     // ---- resolve / enabled / suggestions: hiding for every other entry point ---------------------------------------
@@ -472,6 +473,7 @@ object LauncherHook {
         userIdOfParam: (HookParam) -> Int,
         userOf: (HookParam) -> UserHandle? = { null },
         appInfoOf: (HookParam) -> ApplicationInfo? = { null },
+        scope: Int = HideScope.LAUNCHER,
         onHidden: (HookParam) -> Unit,
     ): HookCallback = object : HookCallback() {
         override fun after(param: HookParam) {
@@ -482,7 +484,7 @@ object LauncherHook {
                 val pkg = pkgOf(param) ?: return
                 val be = Runtime.be()
                 val mod = ModuleCache.isXposedModule(pkg, appInfoOf(param), Runtime.contextOf(impl), userOf(param), be)
-                if (StateStore.snapshot.shouldHide(pkg, userIdOfParam(param), mod)) onHidden(param)
+                if (StateStore.snapshot.shouldHideScope(pkg, userIdOfParam(param), mod, scope)) onHidden(param)
             } catch (t: Throwable) {
                 if (hideGuardErrorLogged.compareAndSet(false, true)) HealthLog.event("hideGuard failed", t)
             }
@@ -494,6 +496,7 @@ object LauncherHook {
         pkgOf: (HookParam) -> String?,
         userOf: (HookParam) -> UserHandle?,
         appInfoOf: (HookParam) -> ApplicationInfo? = { null },
+        scope: Int = HideScope.LAUNCHER,
         onHidden: (HookParam) -> Unit,
     ): HookCallback = hideGuardByUserId(
         precondition = precondition,
@@ -501,6 +504,7 @@ object LauncherHook {
         userIdOfParam = { p -> userIdOf(userOf(p), Runtime.be()) },
         userOf = userOf,
         appInfoOf = appInfoOf,
+        scope = scope,
         onHidden = onHidden,
     )
 
@@ -541,7 +545,7 @@ object LauncherHook {
                     val be = Runtime.be()
                     val user = param.args[1] as? UserHandle
                     val mod = ModuleCache.isXposedModule(pkg, null, Runtime.contextOf(param.thisObject), user, be)
-                    if (StateStore.snapshot.shouldHide(pkg, userIdOf(user, be), mod)) param.setResult(true)
+                    if (StateStore.snapshot.shouldHideScope(pkg, userIdOf(user, be), mod, HideScope.SUGGESTIONS)) param.setResult(true)
                 } catch (_: Throwable) {
                 }
             }
@@ -551,13 +555,13 @@ object LauncherHook {
             cb = hideGuard(resultNull, componentPkg, componentUser, onHidden = toNull))
         h.optional("LauncherApps.getShortcutConfigActivityIntent", clazz, "getShortcutConfigActivityIntent",
             String::class.java, ComponentName::class.java, UserHandle::class.java,
-            cb = hideGuard({ p -> p.result != null && StateStore.snapshot.hideShortcutConfigs }, componentPkg, componentUser, onHidden = toNull))
+            cb = hideGuard(resultNull, componentPkg, componentUser, scope = HideScope.SHORTCUT_CONFIGS, onHidden = toNull))
         h.optional("LauncherApps.getShortcutIntent", clazz, "getShortcutIntent",
             String::class.java, String::class.java, String::class.java, Bundle::class.java, UserHandle::class.java,
-            cb = hideGuard({ p -> p.result != null && StateStore.snapshot.hideShortcuts }, { p -> p.args[1] as? String }, { p -> p.args[4] as? UserHandle }, onHidden = toNull))
+            cb = hideGuard(resultNull, { p -> p.args[1] as? String }, { p -> p.args[4] as? UserHandle }, scope = HideScope.SHORTCUTS, onHidden = toNull))
         h.optional("LauncherApps.startShortcut", clazz, "startShortcut",
             String::class.java, String::class.java, String::class.java, String::class.java, Rect::class.java, Bundle::class.java, INT,
-            cb = hideGuardByUserId({ p -> p.result == true && StateStore.snapshot.hideShortcuts }, { p -> p.args[1] as? String }, { p -> (p.args[6] as? Int) ?: 0 }, onHidden = toFalse))
+            cb = hideGuardByUserId(resultTrue, { p -> p.args[1] as? String }, { p -> (p.args[6] as? Int) ?: 0 }, scope = HideScope.SHORTCUTS, onHidden = toFalse))
     }
 
     /**
@@ -593,7 +597,7 @@ object LauncherHook {
                     val list = param.result as? List<*> ?: return
                     if (list.isEmpty()) return
                     val snap = StateStore.snapshot
-                    val canHide = snap.hideIntentChooser && snap.mayHideAnything()
+                    val canHide = snap.mayHideAnything()
                     val canLook = snap.mayCustomizeLooks()
                     if (!canHide && !canLook) return
                     val intent = param.args[0] as? Intent
@@ -622,10 +626,11 @@ object LauncherHook {
                         val ai = ri?.activityInfo
                         val pkg = ai?.packageName
                         val itemUserId = ai?.applicationInfo?.uid?.let { it / 100_000 } ?: userId
-                        val hidden = canHide && pkg != null && snap.shouldHide(
+                        val hidden = canHide && pkg != null && snap.shouldHideScope(
                             pkg,
                             itemUserId,
                             ModuleCache.isXposedModule(pkg, ai.applicationInfo, null, null, be),
+                            HideScope.INTENT_CHOOSER,
                         )
                         if (hidden && isAppQuery()) {
                             if (kept == null) {

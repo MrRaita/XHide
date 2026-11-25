@@ -2,6 +2,7 @@ package dev.fadalias.core
 
 import android.os.Process
 import android.os.UserHandle
+import dev.fadalias.state.HideScope
 import dev.fadalias.state.Overlay
 
 /**
@@ -44,7 +45,7 @@ internal object Coordinator {
             for ((id, pkg) in candidates) {
                 val profile = byId[id] ?: continue
                 val mod = isModule(pkg, profile)
-                if (before.shouldHide(pkg, id, mod) != after.shouldHide(pkg, id, mod)) {
+                if (before.shouldHideScope(pkg, id, mod, HideScope.LAUNCHER) != after.shouldHideScope(pkg, id, mod, HideScope.LAUNCHER)) {
                     hideShow.getOrPut(id) { ArrayList() }.add(pkg)
                     transitioned.add(id to pkg)
                 }
@@ -53,7 +54,7 @@ internal object Coordinator {
             // 2) explicit refresh requests re-announce the current state of the named packages
             for (pkg in u.refresh) for ((id, profile) in byId) {
                 if (id != requesterId && !Notifier.installedIn(ctx, pkg, id)) continue
-                if (after.shouldHide(pkg, id, isModule(pkg, profile))) {
+                if (after.shouldHideScope(pkg, id, isModule(pkg, profile), HideScope.LAUNCHER)) {
                     hideShow.getOrPut(id) { ArrayList() }.add(pkg)
                     transitioned.add(id to pkg)
                 }
@@ -82,7 +83,7 @@ internal object Coordinator {
             for ((id, profile) in byId) {
                 if ((id to pkg) in transitioned || (id to pkg) in userIconWork || (id to pkg) in userRemovals) continue
                 if (id != requesterId && !Notifier.installedIn(ctx, pkg, id)) continue
-                if (hideSupported && after.shouldHide(pkg, id, isModule(pkg, profile))) continue
+                if (hideSupported && after.shouldHideScope(pkg, id, isModule(pkg, profile), HideScope.LAUNCHER)) continue
                 if (after.apps[pkg] == null && after.labelOf(pkg, id) == null && pkg !in u.refresh) continue
                 nameSignals.getOrPut(id) { ArrayList() }.add(pkg)
             }
@@ -139,7 +140,7 @@ internal object Coordinator {
                 val out = overlays.apply(ctx, pkg, listOf(profile), userId)
                 val ok = out.status == Overlay.OK
                 StateStore.recordOverlay(pkg, if (ok) out.rev else userRule!!.overlayRev, out.status, userId)
-                if (ok && impl != null && !StateStore.snapshot.shouldHide(pkg, userId, ModuleCache.isXposedModule(pkg, null, ctx, profile, be))) {
+                if (ok && impl != null && !StateStore.snapshot.shouldHideScope(pkg, userId, ModuleCache.isXposedModule(pkg, null, ctx, profile, be), HideScope.LAUNCHER)) {
                     Notifier.changed(impl, profile, listOf(pkg))
                 }
             } else if ((globalRule?.iconRev ?: 0L) > 0L) {
@@ -151,7 +152,7 @@ internal object Coordinator {
                     val latest = StateStore.snapshot
                     for ((id, prof) in byId) {
                         if (!Notifier.installedIn(ctx, pkg, id)) continue
-                        if (latest.shouldHide(pkg, id, ModuleCache.isXposedModule(pkg, null, ctx, prof, be))) continue
+                        if (latest.shouldHideScope(pkg, id, ModuleCache.isXposedModule(pkg, null, ctx, prof, be), HideScope.LAUNCHER)) continue
                         Notifier.changed(impl, prof, listOf(pkg))
                     }
                 }
@@ -216,14 +217,14 @@ internal object Coordinator {
         for (pkg in announce) for ((id, profile) in byId) {
             if ((id to pkg) in transitioned) continue
             if (id != requesterId && !Notifier.installedIn(ctx, pkg, id)) continue
-            if (snap.shouldHide(pkg, id, ModuleCache.isXposedModule(pkg, null, ctx, profile, be))) continue
+            if (snap.shouldHideScope(pkg, id, ModuleCache.isXposedModule(pkg, null, ctx, profile, be), HideScope.LAUNCHER)) continue
             perUser.getOrPut(id) { ArrayList() }.add(pkg)
         }
         for ((id, pkg) in announceUsers) {
             if ((id to pkg) in transitioned) continue
             val profile = byId[id] ?: continue
             if (id != requesterId && !Notifier.installedIn(ctx, pkg, id)) continue
-            if (snap.shouldHide(pkg, id, ModuleCache.isXposedModule(pkg, null, ctx, profile, be))) continue
+            if (snap.shouldHideScope(pkg, id, ModuleCache.isXposedModule(pkg, null, ctx, profile, be), HideScope.LAUNCHER)) continue
             val list = perUser.getOrPut(id) { ArrayList() }
             if (pkg !in list) list.add(pkg)
         }

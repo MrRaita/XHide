@@ -10,6 +10,7 @@ import android.os.IInterface
 import android.os.RemoteCallbackList
 import android.os.UserHandle
 import android.os.UserManager
+import dev.fadalias.state.HideScope
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
@@ -184,7 +185,7 @@ internal object Notifier {
             val hideSupported = android.os.Build.VERSION.SDK_INT >= 30
             if (hideSupported) {
                 val hidden = snap.hiddenFor(userId, ModuleCache.getDetectedModulePackages()).filter { pkg ->
-                    snap.shouldHide(pkg, userId, ModuleCache.isXposedModule(pkg, null, ctx, profile, be))
+                    snap.shouldHideScope(pkg, userId, ModuleCache.isXposedModule(pkg, null, ctx, profile, be), HideScope.LAUNCHER)
                 }
                 if (hidden.isNotEmpty()) {
                     HealthLog.event("reconciliation pulse for user $userId (${hidden.size} hidden)")
@@ -195,7 +196,7 @@ internal object Notifier {
             unconfirmed.entries.removeIf { it.value < cutoff }
             val pending = unconfirmed.keys.filter { pkg ->
                 (snap.apps[pkg] != null || snap.labelOf(pkg, userId) != null || snap.icons[userId]?.get(pkg) != null) &&
-                    (!hideSupported || !snap.shouldHide(pkg, userId, ModuleCache.isXposedModule(pkg, null, ctx, profile, be)))
+                    (!hideSupported || !snap.shouldHideScope(pkg, userId, ModuleCache.isXposedModule(pkg, null, ctx, profile, be), HideScope.LAUNCHER))
             }
             if (pending.isNotEmpty()) {
                 HealthLog.event("re-announcing ${pending.size} unconfirmed name/icon change(s) for user $userId")
@@ -239,7 +240,7 @@ internal object Notifier {
         val userId = userIdOf(profile, be)
         val snap = StateStore.snapshot
         val (hidden, shown) = pkgs.distinct().partition { pkg ->
-            snap.shouldHide(pkg, userId, ModuleCache.isXposedModule(pkg, null, ctx, profile, be))
+            snap.shouldHideScope(pkg, userId, ModuleCache.isXposedModule(pkg, null, ctx, profile, be), HideScope.LAUNCHER)
         }
         val emptySlice = if (hidden.isNotEmpty()) runCatching {
             be.callStaticMethod(Class.forName("android.content.pm.ParceledListSlice"), "emptyList")
