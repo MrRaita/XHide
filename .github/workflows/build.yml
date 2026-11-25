@@ -47,13 +47,13 @@ jobs:
             VERSION_TAG="v${RAW_VER}"
           fi
           echo "Packaging version: $VERSION_TAG"
-          cp app/build/outputs/apk/release/app-release.apk "dist/XHide-${VERSION_TAG}-release.apk"
-          cp app/build/outputs/apk/debug/app-debug.apk "dist/XHide-${VERSION_TAG}-debug.apk"
+          cp app/build/outputs/apk/release/app-release.apk "dist/Fadalias-${VERSION_TAG}-release.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/Fadalias-${VERSION_TAG}-debug.apk"
 
-      - name: Upload XHide APK Artifacts
+      - name: Upload Fadalias APK Artifacts
         uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
         with:
-          name: XHide-apks
+          name: Fadalias-apks
           path: dist/*.apk
 
   release:
@@ -66,10 +66,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - name: Download XHide APK Artifacts
+      - name: Download Fadalias APK Artifacts
         uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
         with:
-          name: XHide-apks
+          name: Fadalias-apks
           path: dist
 
       - name: Publish GitHub Release on Tag
@@ -77,5 +77,5 @@ jobs:
         with:
           files: dist/*.apk
           body_path: RELEASE_NOTES_DRAFT.md
-          name: XHide ${{ github.ref_name }}
+          name: Fadalias ${{ github.ref_name }}
           generate_release_notes: false

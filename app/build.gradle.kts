@@ -5,84 +5,42 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// libxposed API: the module core is written against 101 (the default). The 102 sources (hot reload) are compiled
+// against 102 and guarded at runtime; to switch, set targetApiVersion=102 and autoHotReload=true in
+// src/main/resources/META-INF/xposed/module.prop.
 configurations {
     create("api101Verification")
     create("api102CompileOnly")
-    named("compileOnly") {
-        extendsFrom(getByName("api102CompileOnly"))
-    }
-    named("debugCompileOnly") {
-        extendsFrom(getByName("api102CompileOnly"))
-    }
-    named("releaseCompileOnly") {
-        extendsFrom(getByName("api102CompileOnly"))
-    }
+    named("compileOnly") { extendsFrom(getByName("api102CompileOnly")) }
+    named("debugCompileOnly") { extendsFrom(getByName("api102CompileOnly")) }
+    named("releaseCompileOnly") { extendsFrom(getByName("api102CompileOnly")) }
 }
 
 android {
-    sourceSets {
-        named("debug") {
-            java.directories.add("src/api102/java")
-        }
-        named("release") {
-            java.directories.add("src/api102/java")
-        }
-    }
-
-
-    namespace = "org.lsposed.hidexposed"
+    namespace = "dev.fadalias"
     compileSdk = 37
 
-    defaultConfig {
-        applicationId = "org.lsposed.hidexposed"
-        minSdk = 30
-        targetSdk = 37
-        versionCode = 105
-        versionName = "1.0.5"
+    sourceSets {
+        named("debug") { java.directories.add("src/api102/java") }
+        named("release") { java.directories.add("src/api102/java") }
     }
 
-    signingConfigs {
-        create("release") {
-            val keystoreFile = System.getenv("KEYSTORE_FILE")
-            // Opt-in strict mode for official releases: refuse to fall back to the debug key
-            // or ship without a pinned companion certificate.
-            val strictSigning = System.getenv("XHIDE_STRICT_SIGNING").equals("true", ignoreCase = true)
-            if (strictSigning) {
-                if (keystoreFile.isNullOrEmpty() || !file(keystoreFile).exists()) {
-                    throw GradleException("XHIDE_STRICT_SIGNING is set but KEYSTORE_FILE is missing or does not exist")
-                }
-                if (System.getenv("RELEASE_CERT_SHA256").isNullOrBlank()) {
-                    throw GradleException("XHIDE_STRICT_SIGNING is set but RELEASE_CERT_SHA256 is empty")
-                }
-            }
-            if (!keystoreFile.isNullOrEmpty() && file(keystoreFile).exists()) {
-                storeFile = file(keystoreFile)
-                storePassword = System.getenv("KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("KEY_ALIAS")
-                keyPassword = System.getenv("KEY_PASSWORD")
-            } else {
-                val debugStore = getByName("debug").storeFile
-                if (debugStore != null && !debugStore.exists()) {
-                    debugStore.parentFile?.mkdirs()
-                    val javaHome = System.getProperty("java.home")
-                    val keytoolBin = file("$javaHome/bin/keytool").takeIf { it.exists() }?.absolutePath ?: "keytool"
-                    try {
-                        ProcessBuilder(
-                            keytoolBin,
-                            "-genkeypair",
-                            "-alias", "androiddebugkey",
-                            "-keypass", "android",
-                            "-keystore", debugStore.absolutePath,
-                            "-storepass", "android",
-                            "-dname", "CN=Android Debug,O=Android,C=US",
-                            "-keyalg", "RSA",
-                            "-keysize", "2048",
-                            "-validity", "10000"
-                        ).inheritIO().start().waitFor()
-                    } catch (_: Throwable) {
-                    }
-                }
-                initWith(getByName("debug"))
+    defaultConfig {
+        applicationId = "dev.hfw"
+        minSdk = 26 // lower bound required by libxposed API 101
+        targetSdk = 36
+        versionCode = 1
+        versionName = "0.1.0"
+    }
+
+    val customKeystore = System.getenv("FADALIAS_KEYSTORE")?.takeIf { it.isNotEmpty() && file(it).exists() }
+    if (customKeystore != null) {
+        signingConfigs {
+            create("fadaliasRelease") {
+                storeFile = file(customKeystore)
+                storePassword = System.getenv("FADALIAS_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("FADALIAS_KEY_ALIAS")
+                keyPassword = System.getenv("FADALIAS_KEY_PASSWORD")
             }
         }
     }
@@ -91,15 +49,13 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
-            signingConfig = signingConfigs.getByName("release")
-            buildConfigField("String", "RELEASE_CERT_SHA256", "\"${System.getenv("RELEASE_CERT_SHA256") ?: ""}\"")
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Personal sideload builds are signed with the debug key unless FADALIAS_KEYSTORE* is set.
+            signingConfig = signingConfigs.getByName(if (customKeystore != null) "fadaliasRelease" else "debug")
         }
-        debug {
-            buildConfigField("String", "RELEASE_CERT_SHA256", "\"\"")
+        all {
+            // Optional pin: only a manager signed with this certificate may talk to the hook (empty = package name + any signature).
+            buildConfigField("String", "PINNED_CERT_SHA256", "\"${System.getenv("FADALIAS_CERT_SHA256") ?: ""}\"")
         }
     }
 
@@ -124,6 +80,9 @@ kotlin {
         freeCompilerArgs.addAll(
             "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
             "-opt-in=androidx.compose.material3.ExperimentalMaterial3ExpressiveApi",
+            "-opt-in=androidx.compose.animation.ExperimentalSharedTransitionApi",
+            "-opt-in=androidx.compose.foundation.ExperimentalFoundationApi",
+            "-opt-in=androidx.compose.foundation.layout.ExperimentalLayoutApi",
         )
     }
 }
@@ -134,26 +93,24 @@ tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class).configure
     }
 }
 
+// Compiles the production core against libxposed API 101 only, so nothing from 102 can leak into the default path.
+// Run: gradle :app:verifyApi101Core
 val verifyApi101Core by tasks.registering(JavaExec::class) {
     group = "verification"
-    description = "Compiles the production modern core against libxposed API 101 only."
+    description = "Compiles the modern core against libxposed API 101 only."
 
-    val api101VerificationSources = files(
-        fileTree("src/main/java/org/lsposed/hidexposed/core") {
-            exclude("AppDiagnostics.kt")
-        },
-        fileTree("src/main/java/org/lsposed/hidexposed/data"),
+    val sources = files(
+        fileTree("src/main/java/dev/fadalias/core"),
+        fileTree("src/main/java/dev/fadalias/state"),
+        file("src/main/java/dev/fadalias/Identity.kt"),
+        file("src/main/java/dev/fadalias/data/DurableFiles.kt"),
         fileTree("src/api101/java"),
-        fileTree(layout.buildDirectory.dir("generated/source/buildConfig/debug")) {
-            include("**/BuildConfig.java")
-        }
+        fileTree(layout.buildDirectory.dir("generated/source/buildConfig/debug")) { include("**/BuildConfig.java") },
     )
-    val api101VerificationClasspath = files(
+    val classpathFiles = files(
         provider {
             tasks.named("compileDebugKotlin", org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class)
-                .get().libraries.filter {
-                    it.name != "api-102.0.0-api.jar"
-                }
+                .get().libraries.filter { !it.name.startsWith("api-102") }
         },
         configurations.getByName("api101Verification").incoming.artifactView {
             attributes {
@@ -164,15 +121,11 @@ val verifyApi101Core by tasks.registering(JavaExec::class) {
             }
         }.files
     )
-    val sourceFiles = api101VerificationSources.elements.map { files ->
-        files.map { it.asFile }.sortedBy { it.absolutePath }.map { it.absolutePath }
-    }
-    val classpathText = api101VerificationClasspath.elements.map { files ->
-        files.joinToString(File.pathSeparator) { it.asFile.absolutePath }
-    }
+    val sourceList = sources.elements.map { f -> f.map { it.asFile }.sortedBy { it.absolutePath }.map { it.absolutePath } }
+    val classpathText = classpathFiles.elements.map { f -> f.joinToString(File.pathSeparator) { it.asFile.absolutePath } }
     val output = layout.buildDirectory.dir("api101-verification/classes")
 
-    inputs.files(api101VerificationSources, api101VerificationClasspath)
+    inputs.files(sources, classpathFiles)
     outputs.dir(output)
     dependsOn("generateDebugBuildConfig")
 
@@ -180,13 +133,7 @@ val verifyApi101Core by tasks.registering(JavaExec::class) {
     mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
     argumentProviders.add(
         org.gradle.process.CommandLineArgumentProvider {
-            listOf(
-                "-no-stdlib",
-                "-no-reflect",
-                "-jvm-target", "21",
-                "-classpath", classpathText.get(),
-                "-d", output.get().asFile.absolutePath
-            ) + sourceFiles.get()
+            listOf("-no-stdlib", "-no-reflect", "-jvm-target", "21", "-classpath", classpathText.get(), "-d", output.get().asFile.absolutePath) + sourceList.get()
         }
     )
     doFirst { output.get().asFile.mkdirs() }
@@ -194,7 +141,6 @@ val verifyApi101Core by tasks.registering(JavaExec::class) {
 
 dependencies {
     add("api101Verification", "io.github.libxposed:api:101.0.1")
-    add("api101Verification", "org.json:json:20240303")
     add("kotlinCompilerClasspath", "org.jetbrains.kotlin:kotlin-compiler-embeddable:${libs.versions.kotlin.get()}")
     add("api102CompileOnly", "io.github.libxposed:api:102.0.0")
 
@@ -204,10 +150,10 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.graphics.shapes)
     implementation(libs.kotlinx.coroutines.android)
 
     testImplementation("junit:junit:4.13.2")
-    testImplementation("io.github.libxposed:api:102.0.0")
     testImplementation("org.json:json:20240303")
 }

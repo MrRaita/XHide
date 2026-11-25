@@ -1,0 +1,2 @@
+allow idmap system_server fd use
+allow idmap system_data_file file { read getattr map }

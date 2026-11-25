@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- rounded tile -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M40,32 h28 a10,10 0 0 1 10,10 v24 a10,10 0 0 1 -10,10 h-28 a10,10 0 0 1 -10,-10 v-24 a10,10 0 0 1 10,-10 z" />
+    <!-- eye-off slash -->
+    <path
+        android:strokeColor="#FF4F378B"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M42,66 L66,42" />
+    <!-- dot -->
+    <path
+        android:fillColor="#FF4F378B"
+        android:pathData="M54,54 m-5,0 a5,5 0 1 0 10,0 a5,5 0 1 0 -10,0" />
+</vector>

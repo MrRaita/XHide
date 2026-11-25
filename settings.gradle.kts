@@ -24,5 +24,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "XHide"
+rootProject.name = "Fadalias"
 include(":app")
