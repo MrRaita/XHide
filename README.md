@@ -1,42 +1,44 @@
-# Fadalias
+# HFW
 
-An LSPosed/Vector module that renames apps, changes their icons and hides them, with a Material 3 Expressive companion app.
-It merges the Rebrand and XHide modules. The name and package id are provisional and live in `Identity.kt`, `app/build.gradle.kts` and `sepolicy-module/`.
+An LSPosed/Vector module (`dev.hfw`) that renames apps, changes their icons, and hides them across profiles, with a Material 3 Expressive companion app.
 
-| Feature | Android |
-|---|---|
-| Rename | 8+ (8-10 path untested) |
-| Hide | 11+ |
-| Change icon | 14+ (needs the SELinux module) |
+Built by evolving **XHide** with app renaming, icon overlays, and core architecture contributions by [@MrRaita](https://github.com/MrRaita), alongside app hiding, intent/shortcut filtering, and per-profile customization.
+
+| Feature | Android | Scope |
+|---|---|---|
+| Rename | 8+ (8-10 path untested) | Global & per-profile |
+| Hide | 11+ | Per-profile (with toggleable intent chooser, shortcuts, shortcut configs & share targets) |
+| Change icon | 14+ (needs the SELinux module) | Global & per-profile (including system apps) |
 
 The companion app hides features the running Android version does not support.
 
 ## Architecture
-- **Hook (system_server):** `LauncherAppsService`, `UserManagerService.getProfileIds` and `PackageInfoUtils`. A single `getLauncherActivities` hook handles IPC, filtering, names and icons.
-- **IPC:** the command travels in the package-name argument of `getActivityList` (`__fadalias_ipc__:ping|status|log|reload|state.get|state.update:<json>|all_users`); the reply is JSON in `ApplicationInfo.metaData["dev.fadalias.REPLY"]`. An empty list means rejected or unreachable. The caller is verified by package name and signature (pin it with `FADALIAS_CERT_SHA256`).
-- **State:** `/data/system/fadalias/state` (+ `.bak`), written atomically with fsync; icons in `icons/<pkg>.png`. The companion app keeps its own `rules.json` and `pending.json` (offline queue); the hook state is a replica. Sync: replay the queue, compare hashes, `Replace` on mismatch (adopt the hook state on a fresh empty store). A rejected change is reverted locally.
-- **Icon layer:** FabricatedOverlay (Android 14+) fed from the manager's `RulesProvider` (uid 1000 only). The SELinux policy lives in `sepolicy-module/`; the app offers it as a zip ("Save module file").
+- **Hook (`system_server`):** `LauncherAppsService$LauncherAppsImpl`, `ShortcutService`, `ComputerEngine` / `PackageManagerService` (`queryIntentActivitiesInternal`), `UserManagerService.getProfileIds`, `IdmapDaemon` (Android 14+), and `PackageInfoUtils`.
+- **IPC:** commands travel in the package-name argument of `getActivityList` (`__hfw_ipc__:ping|status|log|reload|state.get|state.update:<json>|all_users`); the reply is JSON in `ApplicationInfo.metaData["dev.hfw.REPLY"]`. An empty list means rejected or unreachable. The caller is verified by package name and signature (pin it with `FADALIAS_CERT_SHA256`).
+- **State:** `/data/system/hfw/state` (+ `.bak`), written atomically with fsync; icons in `icons/<pkg>.png` (and per-user subdirectories). The companion app keeps its own `rules.json` and `pending.json` (offline queue); the hook state is a replica. Sync replays the queue, compares canonical hashes, and reconciles mismatches.
+- **Backup & Restore:** Full `.zip` export/import of rules, labels, hide choices, and custom icons via `BackupManager`.
+- **Icon layer:** `FabricatedOverlay` (Android 14+) fed from the manager's `RulesProvider` (uid 1000 only), with `IdmapDaemon` `<overlayable>` bypass for `hfw_*` overlays so pre-installed/system apps work too. The SELinux policy lives in `sepolicy-module/`; the app offers it as a zip ("Save module file").
 - **Permissions:** `QUERY_ALL_PACKAGES`, `RECEIVE_BOOT_COMPLETED`. No `INTERNET`.
 - **libxposed:** the core is compiled against API 101; the API 102 sources (hot reload) live in `src/api102` and are guarded at runtime. `./gradlew :app:verifyApi101Core` checks that the core compiles against 101 only.
 
-## System apps and Fadalias itself
+## System apps and HFW itself
 - System apps are hidden from the list unless the switch in the sort menu is on (first enable shows a risk warning).
-- Name and icon of any system app, and of Fadalias itself, can be changed after a warning ("don't show again" is available). Only the `android` and `system` framework packages are locked.
-- Fadalias always sees its own real name; custom names and icons only show up in the launcher and the system. Data is keyed by package name, so renaming never touches it.
-- If you hide Fadalias, open it again from LSPosed -> Modules -> Fadalias.
+- Name and icon of any system app, and of HFW itself, can be changed after a warning ("don't show again" is available). Only the `android` and `system` framework packages are locked.
+- HFW always sees its own real name; custom names and icons only show up in the launcher and the system. Data is keyed by package name, so renaming never touches it.
+- If you hide HFW, open it again from LSPosed/Vector -> Modules -> HFW.
 
 ## Build
 Requires JDK 21 and the Android SDK (platform 37).
-```
+```bash
+./gradlew :app:verifyApi101Core :app:testDebugUnitTest
 ./gradlew assembleDebug assembleRelease
-./gradlew test
 ```
 Release builds are R8-minified and signed with the debug key unless `FADALIAS_KEYSTORE`, `FADALIAS_KEYSTORE_PASSWORD`, `FADALIAS_KEY_ALIAS` and `FADALIAS_KEY_PASSWORD` are set.
-`scripts/pack-sepolicy.sh` rebuilds the bundled `fadalias_sepolicy.zip` after editing `sepolicy-module/`.
+`scripts/pack-sepolicy.sh` rebuilds the bundled SELinux zip (`app/src/main/assets/fadalias_sepolicy.zip`) after editing `sepolicy-module/`.
 
 ## Install
-1. Install the APK, enable the module in LSPosed/Vector (scope: System Framework) and reboot.
-2. For icons: save the SELinux module zip from the app, install it with your root manager and reboot.
+1. Install the APK, enable the module in LSPosed/Vector (scope: `System Framework`) and reboot (or hot-reload on API 102).
+2. For icons (Android 14+): save the SELinux module zip (`hfw_sepolicy`) from the app, install it with your root manager, and reboot.
 
 ## Recovery (boot loop)
 | Root | Action |
@@ -45,13 +47,11 @@ Release builds are R8-minified and signed with the debug key unless `FADALIAS_KE
 | Magisk | Safe mode, or create `/data/adb/modules/<id>/disable` |
 | APatch | Safe mode via the power key during boot |
 
-If needed, delete `/data/system/fadalias/`. Uninstalling the SELinux module does not remove the state directory.
+If needed, delete `/data/system/hfw/`. Uninstalling the SELinux module does not remove the state directory.
 
 ## Known limits
-- The icon overlay is enabled for the requesting user and profiles where the package exists at that time; use "Refresh launchers now" after installing an app later.
-- Name and icon are per package (not per profile); hiding is per profile.
-- Icon previews are lost if the app data is cleared (the overlays keep working); reset and pick again.
-- No backup/restore yet.
+- Icon previews are lost if the app data is cleared (the overlays keep working); export a `.zip` backup beforehand or reset and pick again.
+- Launcher-owned local SQLite search caches (e.g., OEM drawer search history/indexes) clear when the launcher processes package removal events or refreshes its cache.
 
 ## License
 MIT, see `LICENSE`.
