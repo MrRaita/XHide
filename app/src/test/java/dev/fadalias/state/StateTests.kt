@@ -200,5 +200,46 @@ class StateTests {
         assertFalse(afterResetU10.icons[10]?.get("com.app")?.isActive == true)
     }
 
+    @Test fun hideScopeTargetsIndependentlyAndRoundTrips() {
+        // Visible in launcher, hidden only in Open-with and Share
+        val mask = HideScope.INTENT_CHOOSER or HideScope.SHARE_TARGETS
+        var s = reduce(StateData(hideIntentChooser = false), Op.HideScope(0, "com.beemdevelopment.aegis", mask))
+        assertFalse(s.shouldHideScope("com.beemdevelopment.aegis", 0, false, HideScope.LAUNCHER))
+        assertFalse(s.shouldHideScope("com.beemdevelopment.aegis", 0, false, HideScope.SHORTCUTS))
+        assertTrue(s.shouldHideScope("com.beemdevelopment.aegis", 0, false, HideScope.INTENT_CHOOSER))
+        assertTrue(s.shouldHideScope("com.beemdevelopment.aegis", 0, false, HideScope.SHARE_TARGETS))
+        assertFalse("com.beemdevelopment.aegis" in s.hiddenFor(0, emptySet()))
+        assertEquals(mask, s.effectiveHideMask("com.beemdevelopment.aegis", 0, false))
+
+        // Per-profile isolation: user 10 stays untouched
+        assertEquals(0, s.effectiveHideMask("com.beemdevelopment.aegis", 10, false))
+
+        // OpCodec + StateCodec + Canonical.hash round-trip
+        val req = Request("r1", listOf(Op.HideScope(0, "com.beemdevelopment.aegis", mask)))
+        val decodedReq = OpCodec.decode(OpCodec.encode(req))
+        assertNotNull(decodedReq)
+        assertEquals(Op.HideScope(0, "com.beemdevelopment.aegis", mask), decodedReq!!.ops.single())
+
+        val decodedState = StateCodec.decodeText(StateCodec.encodeText(s), strict = true)
+        assertNotNull(decodedState)
+        assertEquals(Canonical.hash(s), Canonical.hash(decodedState!!))
+        assertEquals(mask, decodedState.effectiveHideMask("com.beemdevelopment.aegis", 0, false))
+
+        // PendingQueue coalescing + Op.Forget cleanup
+        val coalesced = PendingQueue.coalesce(listOf(
+            Op.HideScope(0, "com.beemdevelopment.aegis", HideScope.LAUNCHER),
+            Op.HideScope(0, "com.beemdevelopment.aegis", mask),
+            Op.HideScope(0, "com.other", HideScope.ALL),
+            Op.Forget("com.other"),
+        ))
+        assertEquals(listOf(Op.HideScope(0, "com.beemdevelopment.aegis", mask), Op.Forget("com.other")), coalesced)
+
+        // Clearing HideScope falls back to normal Hide state
+        val cleared = reduce(s, Op.HideScope(0, "com.beemdevelopment.aegis", null))
+        assertEquals(0, cleared.effectiveHideMask("com.beemdevelopment.aegis", 0, false))
+        val diff = Diff.between(s, cleared)
+        assertEquals(setOf(0 to "com.beemdevelopment.aegis"), diff.hide)
+    }
+
     private object Identityless { const val SELF = "dev.hfw" }
 }
