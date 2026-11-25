@@ -18,7 +18,7 @@ internal enum class Role { SELF, SYSTEM, LAUNCHER, OTHER }
  * Who is calling? Resolved once per uid and cached; the cache is dropped by [PackageEvents] whenever a package changes,
  * which is what makes caching safe (a reassigned app id can never inherit another app's role).
  *
- * SELF is verified like XHide always did: package name owns the uid + signature (pinned when a cert is configured).
+ * SELF is verified by package ownership + signature (pinned when a cert is configured).
  */
 internal object Callers {
     private const val PER_USER_RANGE = 100000

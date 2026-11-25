@@ -60,7 +60,7 @@ internal object Work {
 /**
  * Turns state changes into the signals launchers react to (all through LauncherAppsImpl.mListeners, system_server side):
  *  - hide:  onPackageRemoved + onPackagesUnavailable (+ empty shortcut list) so OEM launchers purge icons from their DBs
- *  - show:  onPackageAdded + onPackagesAvailable (no onPackageChanged; this is XHide's proven behavior)
+ *  - show:  onPackageAdded + onPackagesAvailable (no onPackageChanged)
  *  - name/icon of a visible package: onPackageChanged + ACTION_PACKAGE_CHANGED broadcast
  *  - name/icon of a hidden package: nothing
  * A hide/show transition always wins over a simultaneous name change (one op, one signal type).
@@ -146,7 +146,7 @@ internal object Notifier {
 
     // ---- public signals ----------------------------------------------------------------------------------------
 
-    /** Hide/show signals for [pkgs] in [profile]; direction is decided at send time from the current state. Sent twice, like XHide. */
+    /** Hide/show signals for [pkgs] in [profile]; direction is decided at send time from the current state. Sent twice for reliability. */
     fun hideShow(impl: Any, profile: UserHandle, pkgs: List<String>) {
         if (pkgs.isEmpty()) return
         post(impl, 0) { deliverHideShow(impl, profile, pkgs) }
@@ -169,7 +169,7 @@ internal object Notifier {
 
     /**
      * A non-exempt caller asked for the full launcher list. After a short delay (so the launcher has finished loading)
-     * re-announce hidden packages (XHide's pulse) and name/icon changes nobody asked about yet.
+     * re-announce hidden packages (reconciliation pulse) and name/icon changes nobody asked about yet.
      */
     fun pulse(impl: Any?, profile: UserHandle?, userId: Int) {
         if (impl == null || profile == null || Runtime.acceptingReload) return

@@ -2,7 +2,7 @@
 
 An LSPosed/Vector module (`dev.hfw`) that renames apps, changes their icons, and hides them across profiles, with a Material 3 Expressive companion app.
 
-Built on top of **XHide** with major contributions from [@MrRaita](https://github.com/MrRaita).
+Built with major contributions from [@MrRaita](https://github.com/MrRaita).
 
 | Feature | Android | Scope |
 |---|---|---|
