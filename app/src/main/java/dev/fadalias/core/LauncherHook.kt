@@ -365,6 +365,9 @@ object LauncherHook {
     private fun dev.fadalias.state.StateData.mayHideAnything(): Boolean =
         autoHide || hide.values.any { it.containsValue(true) }
 
+    private fun dev.fadalias.state.StateData.mayCustomizeLooks(): Boolean =
+        apps.isNotEmpty() || labels.isNotEmpty() || icons.isNotEmpty()
+
     private fun filterSliceByPackage(
         param: HookParam,
         user: UserHandle?,
@@ -590,7 +593,9 @@ object LauncherHook {
                     val list = param.result as? List<*> ?: return
                     if (list.isEmpty()) return
                     val snap = StateStore.snapshot
-                    if (!snap.hideIntentChooser || !snap.mayHideAnything()) return
+                    val canHide = snap.hideIntentChooser && snap.mayHideAnything()
+                    val canLook = snap.mayCustomizeLooks()
+                    if (!canHide && !canLook) return
                     val intent = param.args[0] as? Intent
                     if (intent?.component != null) return
                     val callingUid = Binder.getCallingUid()
@@ -598,26 +603,33 @@ object LauncherHook {
 
                     val userId = (param.args[userIdIdx] as? Int) ?: return
                     val be = Runtime.be()
+                    var appQuery = -1
+                    fun isAppQuery(): Boolean {
+                        if (appQuery != -1) return appQuery == 1
+                        val filterUid = (param.args[3] as? Int) ?: callingUid
+                        val res = callingUid >= Process.FIRST_APPLICATION_UID ||
+                            filterUid >= Process.FIRST_APPLICATION_UID ||
+                            Binder.getCallingPid() != Process.myPid() ||
+                            isResolverCaller()
+                        appQuery = if (res) 1 else 0
+                        return res
+                    }
+
                     var kept: ArrayList<Any?>? = null
                     for (i in list.indices) {
                         val item = list[i]
                         val ri = item as? ResolveInfo
                         val ai = ri?.activityInfo
                         val pkg = ai?.packageName
-                        val hidden = pkg != null && snap.shouldHide(
+                        val itemUserId = ai?.applicationInfo?.uid?.let { it / 100_000 } ?: userId
+                        val hidden = canHide && pkg != null && snap.shouldHide(
                             pkg,
-                            ai.applicationInfo?.uid?.let { it / 100_000 } ?: userId,
+                            itemUserId,
                             ModuleCache.isXposedModule(pkg, ai.applicationInfo, null, null, be),
                         )
-                        if (hidden) {
+                        if (hidden && isAppQuery()) {
                             if (kept == null) {
-                                val filterUid = (param.args[3] as? Int) ?: callingUid
-                                val isAppQuery = callingUid >= Process.FIRST_APPLICATION_UID ||
-                                    filterUid >= Process.FIRST_APPLICATION_UID ||
-                                    Binder.getCallingPid() != Process.myPid() ||
-                                    isResolverCaller()
-                                if (!isAppQuery) return
-                                if (list.size == 1) {
+                                if (list.size == 1 && !canLook) {
                                     param.setResult(emptyList<Any>())
                                     return
                                 }
@@ -625,9 +637,19 @@ object LauncherHook {
                                     for (j in 0 until i) add(list[j])
                                 }
                             }
-                        } else {
-                            kept?.add(item)
+                            continue
                         }
+                        val outItem = if (canLook && ri != null && pkg != null && isAppQuery()) {
+                            applyResolveLooks(ri, snap, itemUserId)
+                        } else {
+                            item
+                        }
+                        if (outItem !== item && kept == null) {
+                            kept = ArrayList<Any?>(list.size).apply {
+                                for (j in 0 until i) add(list[j])
+                            }
+                        }
+                        kept?.add(outItem)
                     }
                     if (kept != null) param.setResult(kept)
                 } catch (t: Throwable) {
@@ -636,6 +658,31 @@ object LauncherHook {
             }
         })
         HealthLog.hook("${target.simpleName}.queryIntentActivitiesInternal", HealthLog.OK)
+    }
+
+    private fun applyResolveLooks(ri: ResolveInfo, snap: dev.fadalias.state.StateData, userId: Int): ResolveInfo {
+        val ai = ri.activityInfo ?: return ri
+        val pkg = ai.packageName ?: return ri
+        val label = snap.labelOf(pkg, userId)
+        val rule = snap.iconRuleOf(pkg, userId)
+        val hasIcon = (rule?.overlayRev ?: 0L) > 0L && rule?.overlayStatus == Overlay.OK
+        if (label == null && !hasIcon) return ri
+        val applyLabel = label != null && (ri.nonLocalizedLabel == null || ri.labelRes == 0 || NameHooks.labelApplies(ai))
+        val appIcon = ai.applicationInfo?.icon ?: 0
+        val applyIcon = hasIcon && appIcon != 0
+        if (!applyLabel && !applyIcon) return ri
+        val aiCopy = ActivityInfo(ai)
+        val riCopy = ResolveInfo(ri)
+        if (applyLabel) {
+            aiCopy.nonLocalizedLabel = label
+            riCopy.nonLocalizedLabel = label
+        }
+        if (applyIcon) {
+            aiCopy.icon = appIcon
+            riCopy.icon = appIcon
+        }
+        riCopy.activityInfo = aiCopy
+        return riCopy
     }
 
     private fun isResolverCaller(): Boolean {
