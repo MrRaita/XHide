@@ -53,5 +53,8 @@ If needed, delete `/data/system/hfw/`. Uninstalling the SELinux module does not 
 - Icon previews are lost if the app data is cleared (the overlays keep working); export a `.zip` backup beforehand or reset and pick again.
 - Launcher-owned local SQLite search caches (e.g., OEM drawer search history/indexes) clear when the launcher processes package removal events or refreshes its cache.
 
+## Disclaimer
+Provided for personal device customization and educational purposes; use at your own risk. Modifying system apps or framework behavior is the user's responsibility.
+
 ## License
 MIT, see `LICENSE`.
