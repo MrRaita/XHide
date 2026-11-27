@@ -288,6 +288,7 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
         val s = store.state
         val auto = StateData(autoHide = s.autoHide, autoHideClone = s.autoHideClone)
         val ops = ArrayList<Op>()
+        val extraIcons = ArrayList<Pair<String, ByteArray>>()
         val touched = ArrayList<Pair<ActivityKind, AppItem>>()
         val resetNamePkgs = HashSet<String>()
         val resetIconPkgs = HashSet<String>()
@@ -299,14 +300,14 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
                     if (Caps.hide) { ops += Op.Hide(it.userId, it.pkg, null); ops += Op.HideScope(it.userId, it.pkg, null) }
                     if (!it.lookProtected) {
                         if (it.renamed && resetNamePkgs.add(it.pkg)) addNameResetOps(it.pkg, usersByPkg[it.pkg].orEmpty(), ops)
-                        if (Caps.icon && it.iconChanged && resetIconPkgs.add(it.pkg)) addIconResetOps(it.pkg, usersByPkg[it.pkg].orEmpty(), ops)
+                        if (Caps.icon && it.iconChanged && resetIconPkgs.add(it.pkg)) addIconResetOps(it.pkg, usersByPkg[it.pkg].orEmpty(), ops, extraIcons)
                     }
                 }
                 BulkAction.RESET_NAME -> if (!it.lookProtected && it.renamed && resetNamePkgs.add(it.pkg)) {
                     addNameResetOps(it.pkg, usersByPkg[it.pkg].orEmpty(), ops)
                 }
                 BulkAction.RESET_ICON -> if (Caps.icon && !it.lookProtected && it.iconChanged && resetIconPkgs.add(it.pkg)) {
-                    addIconResetOps(it.pkg, usersByPkg[it.pkg].orEmpty(), ops)
+                    addIconResetOps(it.pkg, usersByPkg[it.pkg].orEmpty(), ops, extraIcons)
                 }
                 BulkAction.HIDE, BulkAction.SHOW -> if (Caps.hide && it.pkg != Identity.PACKAGE) {
                     val hide = action == BulkAction.HIDE
@@ -325,7 +326,7 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
         val batch = ops.distinct()
         clearSelection()
         if (batch.isEmpty()) { _messages.tryEmit(R.string.msg_bulk_nothing); return }
-        if (apply(batch)) {
+        if (apply(batch, extraIcons = extraIcons)) {
             touched.take(5).forEach { (kind, item) -> log(kind, item) }
             _messages.tryEmit(R.string.msg_bulk_done)
         }
@@ -351,8 +352,12 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
         prefs.saveActivity(activity)
     }
 
-    private fun apply(ops: List<Op>, icon: Pair<String, ByteArray>? = null): Boolean {
-        val ok = store.apply(ops, icon)
+    private fun apply(
+        ops: List<Op>,
+        icon: Pair<String, ByteArray>? = null,
+        extraIcons: List<Pair<String, ByteArray>> = emptyList(),
+    ): Boolean {
+        val ok = store.apply(ops, icon, extraIcons)
         if (!ok) _messages.tryEmit(R.string.msg_save_failed) else syncer.syncAsync()
         return ok
     }
@@ -396,11 +401,31 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
         ops.add(Op.Name(pkg, null, null))
     }
 
-    private fun addIconResetOps(pkg: String, targetUsers: Set<Int>, ops: MutableList<Op>) {
+    private fun addIconResetOps(
+        pkg: String,
+        targetUsers: Set<Int>,
+        ops: MutableList<Op>,
+        extraIcons: MutableList<Pair<String, ByteArray>>,
+    ) {
+        val s = store.state
         for (uid in targetUsers) ops.add(Op.Icon(pkg, 0L, uid))
-        val hasLegacyIcon = (store.state.apps[pkg]?.iconRev ?: 0L) > 0L
-        val existsInOtherProfile = entries.any { it.pkg == pkg && it.userId !in targetUsers }
-        if (hasLegacyIcon && !existsInOtherProfile) ops.add(Op.Icon(pkg, 0L, null))
+        val hasLegacyIcon = (s.apps[pkg]?.iconRev ?: 0L) > 0L
+        if (!hasLegacyIcon) return
+        val otherUsers = entries.asSequence()
+            .filter { it.pkg == pkg && it.userId !in targetUsers }
+            .map { it.userId }
+            .distinct()
+            .filter { (s.icons[it]?.get(pkg)?.iconRev ?: 0L) <= 0L }
+            .toList()
+        if (otherUsers.isNotEmpty()) {
+            val legacyBytes = store.iconBytes(pkg)?.first ?: return
+            for (otherUser in otherUsers) {
+                val rev = store.nextIconRev(pkg, otherUser)
+                ops.add(Op.Icon(pkg, rev, otherUser))
+                extraIcons.add("$otherUser:$pkg" to legacyBytes)
+            }
+        }
+        ops.add(Op.Icon(pkg, 0L, null))
     }
 
     private fun targets(item: AppItem, allProfiles: Boolean): List<AppItem> = if (allProfiles) siblings(item) else listOf(item)
@@ -438,14 +463,16 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
 
     fun resetIcon(item: AppItem, allProfiles: Boolean = false) {
         val ops = ArrayList<Op>(2)
-        addIconResetOps(item.pkg, targets(item, allProfiles).map { it.userId }.toSet(), ops)
-        if (apply(ops.distinct())) log(ActivityKind.RESET, item)
+        val extraIcons = ArrayList<Pair<String, ByteArray>>()
+        addIconResetOps(item.pkg, targets(item, allProfiles).map { it.userId }.toSet(), ops, extraIcons)
+        if (apply(ops.distinct(), extraIcons = extraIcons)) log(ActivityKind.RESET, item)
     }
 
     /** Resets both custom name and custom icon for [item]'s profile (or all profiles when [allProfiles] is true). */
     fun resetLook(item: AppItem, allProfiles: Boolean = false) {
         val s = store.state
         val ops = ArrayList<Op>()
+        val extraIcons = ArrayList<Pair<String, ByteArray>>()
         if (allProfiles) {
             for ((uid, m) in s.labels) if (item.pkg in m) ops.add(Op.Name(item.pkg, null, uid))
             for ((uid, m) in s.icons) if (item.pkg in m) ops.add(Op.Icon(item.pkg, 0L, uid))
@@ -453,13 +480,14 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
             if ((s.apps[item.pkg]?.iconRev ?: 0L) > 0L) ops.add(Op.Icon(item.pkg, 0L, null))
         } else {
             addNameResetOps(item.pkg, setOf(item.userId), ops)
-            addIconResetOps(item.pkg, setOf(item.userId), ops)
+            addIconResetOps(item.pkg, setOf(item.userId), ops, extraIcons)
         }
-        if (ops.isNotEmpty() && apply(ops)) log(ActivityKind.RESET, item)
+        if (ops.isNotEmpty() && apply(ops, extraIcons = extraIcons)) log(ActivityKind.RESET, item)
     }
 
     /** Resets name, icon, and hide state for [item] (single profile or all profiles via [Op.Forget]). */
     fun resetApp(item: AppItem, allProfiles: Boolean = false) {
+        val extraIcons = ArrayList<Pair<String, ByteArray>>()
         val ops = if (allProfiles) {
             listOf(Op.Forget(item.pkg))
         } else {
@@ -467,10 +495,10 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
                 add(Op.Hide(item.userId, item.pkg, null))
                 add(Op.HideScope(item.userId, item.pkg, null))
                 addNameResetOps(item.pkg, setOf(item.userId), this)
-                addIconResetOps(item.pkg, setOf(item.userId), this)
+                addIconResetOps(item.pkg, setOf(item.userId), this, extraIcons)
             }
         }
-        if (apply(ops)) log(ActivityKind.RESET, item)
+        if (apply(ops, extraIcons = extraIcons)) log(ActivityKind.RESET, item)
     }
 
     /** Resets all name, icon, and hide customizations for an entire profile [userId]. */

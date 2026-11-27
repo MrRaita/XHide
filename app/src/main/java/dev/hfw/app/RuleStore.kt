@@ -82,15 +82,20 @@ class RuleStore(private val dir: File) {
         return maxOf(System.currentTimeMillis(), (cur ?: 0L) + 1)
     }
 
-    /** Applies [ops] to the local copy, queues them for the hook, and stores [icon] (`pkg` or `userId:pkg` to PNG) first. False = refused, nothing changed. */
-    fun apply(ops: List<Op>, icon: Pair<String, ByteArray>? = null): Boolean = synchronized(lock) {
+    /** Applies [ops] to the local copy, queues them for the hook, and stores [icon] / [extraIcons] (`pkg` or `userId:pkg` to PNG) first. False = refused, nothing changed. */
+    fun apply(
+        ops: List<Op>,
+        icon: Pair<String, ByteArray>? = null,
+        extraIcons: List<Pair<String, ByteArray>> = emptyList(),
+    ): Boolean = synchronized(lock) {
         val reduced = try {
             Reducer.reduce(state, ops, System.currentTimeMillis())
         } catch (_: IllegalArgumentException) {
             return false
         }
-        if (icon != null) {
-            try { DurableFiles.writeAtomically(iconFileForKey(icon.first).path, icon.second) } catch (_: Throwable) { return false }
+        val allIcons = if (icon != null) extraIcons + icon else extraIcons
+        for ((k, bytes) in allIcons) {
+            try { DurableFiles.writeAtomically(iconFileForKey(k).path, bytes) } catch (_: Throwable) { return false }
         }
         val next = local(reduced.data)
         var q = PendingQueue.coalesce(queue + ops)
