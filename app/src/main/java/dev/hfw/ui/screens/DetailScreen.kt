@@ -2,6 +2,7 @@ package dev.hfw.ui.screens
 
 import android.text.format.DateFormat
 import androidx.compose.foundation.background
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -294,7 +295,11 @@ fun DetailScreen(
         // Top bar: opaque strip over the scrolling content, with the back button and (once collapsed) the app name.
         Box(
             Modifier.fillMaxWidth().height(barDp)
-                .background(scheme.surfaceContainer, RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp)),
+                .drawBehind {
+                    // Same colour as the page at the top, fading to the card colour as the icon collapses into the bar.
+                    val outline = RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp).createOutline(size, layoutDirection, this)
+                    drawOutline(outline, androidx.compose.ui.graphics.lerp(scheme.background, scheme.surfaceContainer, collapseP()))
+                },
         ) {
             Box(Modifier.fillMaxSize().padding(top = with(density) { statusPx.toDp() })) {
                 IconButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart).padding(start = 4.dp)) {
