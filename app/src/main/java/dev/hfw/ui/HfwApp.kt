@@ -521,10 +521,18 @@ private fun MainShell(
                 actions = {
                 if (vm.selecting) {
                     IconButton(onClick = { vm.selectAll(vm.selectableKeys) }) {
-                        Icon(Icons.Rounded.SelectAll, contentDescription = stringResource(R.string.sel_select_all))
+                        Icon(
+                            Icons.Rounded.SelectAll,
+                            contentDescription = stringResource(R.string.sel_select_all),
+                            tint = MaterialTheme.colorScheme.onSurface,
+                        )
                     }
                     IconButton(onClick = { vm.clearSelection() }) {
-                        Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.sel_close))
+                        Icon(
+                            Icons.Rounded.Close,
+                            contentDescription = stringResource(R.string.sel_close),
+                            tint = MaterialTheme.colorScheme.onSurface,
+                        )
                     }
                 }
                 },
