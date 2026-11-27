@@ -45,6 +45,7 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = sv.prefs
 
     @Volatile private var entries: List<AppCatalog.Entry> = emptyList()
+    @Volatile private var profilesComplete = false
     var apps by mutableStateOf<List<AppItem>>(emptyList()); private set
     var activity by mutableStateOf(prefs.loadActivity()); private set
     var loaded by mutableStateOf(false); private set
@@ -184,6 +185,7 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
                 syncer.sync()
                 val r = sv.catalog.load()
                 entries = r.entries
+                profilesComplete = r.profilesComplete
                 if (r.inventoryOk) forgetStale(r)
             }
             rebuild()
@@ -410,7 +412,7 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
         val s = store.state
         for (uid in targetUsers) ops.add(Op.Icon(pkg, 0L, uid))
         val hasLegacyIcon = (s.apps[pkg]?.iconRev ?: 0L) > 0L
-        if (!hasLegacyIcon) return
+        if (!hasLegacyIcon || !profilesComplete) return
         val otherUsers = entries.asSequence()
             .filter { it.pkg == pkg && it.userId !in targetUsers }
             .map { it.userId }

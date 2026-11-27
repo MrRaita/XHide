@@ -34,7 +34,7 @@ class AppCatalog(private val ctx: Context, private val client: HookClient) {
         val key: String get() = "$userId:$pkg"
     }
 
-    class Result(val entries: List<Entry>, val inventoryOk: Boolean)
+    class Result(val entries: List<Entry>, val inventoryOk: Boolean, val profilesComplete: Boolean = false)
 
     @Volatile
     private var infos: Map<String, LauncherActivityInfo> = emptyMap()
@@ -52,12 +52,25 @@ class AppCatalog(private val ctx: Context, private val client: HookClient) {
         val pm = ctx.packageManager
         val la = ctx.getSystemService(LauncherApps::class.java)
         val um = ctx.getSystemService(UserManager::class.java)
+        var profilesComplete = um != null && la != null
         val profiles = LinkedHashSet<UserHandle>()
         profiles.add(Process.myUserHandle())
-        try { um?.userProfiles?.let { profiles.addAll(it) } } catch (_: Throwable) {}
+        try {
+            val userProfiles = um?.userProfiles
+            if (userProfiles == null) profilesComplete = false else profiles.addAll(userProfiles)
+        } catch (_: Throwable) {
+            profilesComplete = false
+        }
 
         val activities = ArrayList<LauncherActivityInfo>()
-        for (p in profiles) try { la?.getActivityList(null, p)?.let { activities.addAll(it) } } catch (_: Throwable) {}
+        for (p in profiles) {
+            try {
+                val list = la?.getActivityList(null, p)
+                if (list == null) profilesComplete = false else activities.addAll(list)
+            } catch (_: Throwable) {
+                profilesComplete = false
+            }
+        }
         if (profiles.size <= 1) activities.addAll(client.allUsers().filter { userIdOf(it.user) != ownUser })
 
         val out = LinkedHashMap<String, Entry>()
@@ -106,7 +119,7 @@ class AppCatalog(private val ctx: Context, private val client: HookClient) {
                 isSystem = isSystem(ai), isModule = true, hasLauncher = false,
             )
         }
-        return Result(out.values.toList(), installed != null)
+        return Result(out.values.toList(), installed != null, profilesComplete)
     }
 
     /** Whether [pkg] is installed for the manager's own user (used to decide if a stale rule may be forgotten). */
