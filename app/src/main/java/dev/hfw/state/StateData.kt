@@ -110,5 +110,5 @@ data class StateData(
     fun labelOf(pkg: String): String? = apps[pkg]?.label
     fun labelOf(pkg: String, userId: Int): String? = labels[userId]?.get(pkg) ?: apps[pkg]?.label
 
-    val explicitHideCount: Int get() = hide.values.sumOf { it.size }
+    val explicitHideCount: Int get() = hide.values.sumOf { it.size } + hideScopes.values.sumOf { it.size }
 }

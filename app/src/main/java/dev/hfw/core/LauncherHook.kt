@@ -480,6 +480,7 @@ object LauncherHook {
                         if (raw.isEmpty()) return
                         val profileId = (param.args[1] as? Int) ?: 0
                         val be = Runtime.be()
+                        val ctx = Runtime.contextOf(param.thisObject)
                         var kept: ArrayList<Any>? = null
                         for (i in raw.indices) {
                             val item = raw[i] ?: continue
@@ -489,7 +490,7 @@ object LauncherHook {
                             val hidden = pkg != null && snap.shouldHideScope(
                                 pkg,
                                 userId,
-                                ModuleCache.isXposedModule(pkg, null, null, info.profile, be),
+                                ModuleCache.isXposedModule(pkg, null, ctx, info.profile, be),
                                 HideScope.WIDGETS,
                             )
                             if (hidden) {
@@ -646,20 +647,25 @@ object LauncherHook {
                     val list = param.result as? List<*> ?: return
                     if (list.isEmpty()) return
                     val snap = StateStore.snapshot
-                    val canHide = snap.mayHideAnything()
-                    val canLook = snap.mayCustomizeLooks()
-                    if (!canHide && !canLook) return
                     val intent = param.args[0] as? Intent
                     if (intent?.component != null) return
                     val callingUid = Binder.getCallingUid()
                     if (Callers.isSelf(callingUid, null) || Callers.inSelfScope()) return
+                    val isMainQuery = intent?.action == Intent.ACTION_MAIN
+                    val filterUid = (param.args[3] as? Int) ?: callingUid
+                    val hideMainForLauncher = isMainQuery &&
+                        !intent.hasCategory("de.robv.android.xposed.category.MODULE_SETTINGS") &&
+                        (Callers.isLauncher(callingUid) || Callers.isLauncher(filterUid))
+                    val effectiveCanHide = snap.mayHideAnything() && (!isMainQuery || hideMainForLauncher)
+                    val canLook = snap.mayCustomizeLooks()
+                    if (!effectiveCanHide && !canLook) return
+                    val hideScope = if (isMainQuery) HideScope.LAUNCHER else HideScope.INTENT_CHOOSER
 
                     val userId = (param.args[userIdIdx] as? Int) ?: return
                     val be = Runtime.be()
                     var appQuery = -1
                     fun isAppQuery(): Boolean {
                         if (appQuery != -1) return appQuery == 1
-                        val filterUid = (param.args[3] as? Int) ?: callingUid
                         val res = callingUid >= Process.FIRST_APPLICATION_UID ||
                             filterUid >= Process.FIRST_APPLICATION_UID ||
                             Binder.getCallingPid() != Process.myPid() ||
@@ -675,15 +681,15 @@ object LauncherHook {
                         val ai = ri?.activityInfo
                         val pkg = ai?.packageName
                         val itemUserId = ai?.applicationInfo?.uid?.let { it / 100_000 } ?: userId
-                        val hidden = canHide && pkg != null && snap.shouldHideScope(
+                        val hidden = effectiveCanHide && pkg != null && snap.shouldHideScope(
                             pkg,
                             itemUserId,
                             ModuleCache.isXposedModule(pkg, ai.applicationInfo, null, null, be),
-                            HideScope.INTENT_CHOOSER,
+                            hideScope,
                         )
                         if (hidden && isAppQuery()) {
                             if (kept == null) {
-                                if (list.size == 1 && !canLook) {
+                                if (list.size == 1) {
                                     param.setResult(emptyList<Any>())
                                     return
                                 }
@@ -693,7 +699,11 @@ object LauncherHook {
                             }
                             continue
                         }
-                        val outItem = if (canLook && ri != null && pkg != null && isAppQuery()) {
+                        val hasLook = canLook && ri != null && pkg != null && (
+                            snap.labelOf(pkg, itemUserId) != null ||
+                                snap.iconRuleOf(pkg, itemUserId)?.let { it.overlayRev > 0L && it.overlayStatus == Overlay.OK } == true
+                            )
+                        val outItem = if (hasLook && isAppQuery()) {
                             applyResolveLooks(ri, snap, itemUserId)
                         } else {
                             item
@@ -721,7 +731,9 @@ object LauncherHook {
         val rule = snap.iconRuleOf(pkg, userId)
         val hasIcon = (rule?.overlayRev ?: 0L) > 0L && rule?.overlayStatus == Overlay.OK
         if (label == null && !hasIcon) return ri
-        val applyLabel = label != null && (ri.nonLocalizedLabel == null || ri.labelRes == 0 || NameHooks.labelApplies(ai))
+        val applyLabel = label != null && ri.nonLocalizedLabel == null &&
+            (ri.labelRes == 0 || ri.labelRes == ai.applicationInfo?.labelRes) &&
+            NameHooks.labelApplies(ai)
         val appIcon = ai.applicationInfo?.icon ?: 0
         val applyIcon = hasIcon && appIcon != 0
         if (!applyLabel && !applyIcon) return ri
