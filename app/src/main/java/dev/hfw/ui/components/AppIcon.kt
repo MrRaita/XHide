@@ -33,6 +33,39 @@ import kotlinx.coroutines.withContext
 
 private object IconCache {
     val cache = LruCache<String, ImageBitmap>(96)
+    val blurCache = LruCache<String, ImageBitmap>(24)
+}
+
+/**
+ * Produces a soft, GPU-independent blurred backdrop from the app's icon so every
+ * Android version and device renders the exact same gradient-like blur.
+ */
+@Composable
+fun rememberBlurredAppIcon(app: AppItem): ImageBitmap? {
+    val ctx = LocalContext.current
+    val sv = remember { Services.get(ctx) }
+    val key = "${app.key}|${app.iconRev}|${app.iconToken}|blur"
+    var bmp by remember(app.key) { mutableStateOf(IconCache.blurCache.get(key)) }
+    LaunchedEffect(key) {
+        val hit = IconCache.blurCache.get(key)
+        if (hit != null) { bmp = hit; return@LaunchedEffect }
+        val fresh = withContext(Dispatchers.IO) {
+            val custom = if (app.iconRev > 0) {
+                (sv.store.iconBytes(app.pkg, app.userId) ?: sv.store.iconBytes(app.pkg))
+                    ?.takeIf { it.second == app.iconRev }?.first?.let { IconCodec.decodePng(it) }
+            } else null
+            val src = custom ?: sv.catalog.original(app.key, 64) ?: return@withContext null
+            // Multi-step bilinear downscale + upscale yields a smooth, deterministic blur on all API levels.
+            val s1 = android.graphics.Bitmap.createScaledBitmap(src, 16, 16, true)
+            val s2 = android.graphics.Bitmap.createScaledBitmap(s1, 6, 6, true)
+            val s3 = android.graphics.Bitmap.createScaledBitmap(s2, 32, 32, true)
+            if (s1 !== src) s1.recycle()
+            s2.recycle()
+            s3.asImageBitmap()
+        }
+        if (fresh != null) { IconCache.blurCache.put(key, fresh); bmp = fresh }
+    }
+    return bmp
 }
 
 /** The app's real launcher icon, or the custom icon the user chose (shown from the manager's own copy of the PNG). */

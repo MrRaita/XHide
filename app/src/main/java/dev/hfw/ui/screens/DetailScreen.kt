@@ -159,10 +159,32 @@ fun DetailScreen(
                     shape = RoundedCornerShape(28.dp),
                     color = scheme.surfaceContainerLow,
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(18.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
+                    val blurredIcon = dev.hfw.ui.components.rememberBlurredAppIcon(app)
+                    Box(Modifier.fillMaxWidth()) {
+                        if (blurredIcon != null) {
+                            androidx.compose.foundation.Image(
+                                bitmap = blurredIcon,
+                                contentDescription = null,
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                modifier = Modifier.matchParentSize(),
+                            )
+                            Box(
+                                Modifier
+                                    .matchParentSize()
+                                    .background(
+                                        androidx.compose.ui.graphics.Brush.horizontalGradient(
+                                            colors = listOf(
+                                                scheme.surfaceContainerLow.copy(alpha = 0.62f),
+                                                scheme.surfaceContainerLow.copy(alpha = 0.86f),
+                                            ),
+                                        ),
+                                    ),
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(18.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
                         Box(
                             modifier = Modifier
                                 .size(76.dp)
@@ -209,6 +231,7 @@ fun DetailScreen(
                                 if (app.hidden) Pill(stringResource(R.string.pill_hidden))
                             }
                         }
+                    }
                     }
                 }
 
