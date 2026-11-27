@@ -268,7 +268,7 @@ fun DetailScreen(
                     ActionCard(
                         icon = if (app.hidden) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
                         title = stringResource(R.string.action_hide),
-                        subtitle = if (app.hidden) scopeStatus(vm.hideScopeOf(app)) else stringResource(R.string.action_hide_off),
+                        subtitle = stringResource(if (app.hidden) R.string.action_hide_on else R.string.action_hide_off),
                         onClick = { requestHide(!app.hidden) },
                         trailing = {
                             Switch(checked = app.hidden, onCheckedChange = { requestHide(it) })
@@ -478,20 +478,6 @@ private fun InfoLine(label: String, value: String) {
         )
         Text(text = value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
     }
-}
-
-/** Real coverage of the hide, grouped the way the user thinks about it. */
-@Composable
-private fun scopeStatus(mask: Int): String {
-    val H = dev.hfw.state.HideScope
-    if (mask and H.ALL == H.ALL) return stringResource(R.string.scope_everywhere)
-    val parts = buildList {
-        if (mask and H.LAUNCHER != 0) add(stringResource(R.string.scope_cat_launcher))
-        if (mask and H.SUGGESTIONS != 0) add(stringResource(R.string.scope_cat_suggestions))
-        if (mask and (H.SHORTCUT_CONFIGS or H.SHORTCUTS or H.WIDGETS) != 0) add(stringResource(R.string.scope_cat_shortcuts))
-        if (mask and (H.INTENT_CHOOSER or H.SHARE_TARGETS) != 0) add(stringResource(R.string.scope_cat_chooser))
-    }
-    return if (parts.isEmpty()) stringResource(R.string.action_hide_off) else stringResource(R.string.scope_hidden_in, parts.joinToString(", "))
 }
 
 /** Advanced mode: compact hide card by default; tapping the card expands/collapses the per-place toggles. */
