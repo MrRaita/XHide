@@ -5,6 +5,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -139,68 +141,76 @@ fun DetailScreen(
     val scroll = rememberScrollState()
     val statusPx = WindowInsets.statusBars.getTop(density)
     val barDp = with(density) { statusPx.toDp() } + 56.dp
-    // Collapse geometry (px): the icon travels from its resting centre (c0) to the slot in the top bar (ct).
-    val barPx = with(density) { barDp.toPx() }
-    val c0 = barPx + with(density) { 68.dp.toPx() }
-    val ct = statusPx + with(density) { 28.dp.toPx() }
-    val travel = (c0 - ct).coerceAtLeast(1f)
+    val travel = with(density) { 84.dp.toPx() }.coerceAtLeast(1f)
     val collapseP: () -> Float = { (scroll.value / travel).coerceIn(0f, 1f) }
+    val flightReg = dev.hfw.ui.components.LocalIconFlight.current
+
     Surface(modifier = modifier, color = scheme.background, contentColor = scheme.onBackground) {
-        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
-        val widthPx = with(density) { maxWidth.toPx() }
-        val cxt = with(density) { 76.dp.toPx() }
-        val flightReg = dev.hfw.ui.components.LocalIconFlight.current
-        val iconPx = with(density) { 120.dp.toPx() }
-        // Keep the flight's idea of "where the icon is now" current (also when collapsed into the bar). Frozen while a flight runs.
-        androidx.compose.runtime.LaunchedEffect(widthPx, travel, cxt) {
-            androidx.compose.runtime.snapshotFlow { scroll.value }.collect { v ->
-                if (flightReg.flying == null || v == 0) {
-                    val p = (v / travel).coerceIn(0f, 1f)
-                    val cx = androidx.compose.ui.util.lerp(widthPx / 2f, cxt, p)
-                    val cy = androidx.compose.ui.util.lerp(c0 - v, ct, p)
-                    val half = iconPx * androidx.compose.ui.util.lerp(1f, 0.3f, p) / 2f
-                    flightReg.detailRect = androidx.compose.ui.geometry.Rect(cx - half, cy - half, cx + half, cy + half)
+        Box(Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(scroll)
+                    .padding(horizontal = 16.dp),
+            ) {
+                Spacer(Modifier.height(barDp + 8.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(28.dp),
+                    color = scheme.surfaceContainerLow,
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(18.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(76.dp)
+                                .onGloballyPositioned { coords ->
+                                    if (flightReg.flying == null || scroll.value == 0) {
+                                        flightReg.detailRect = coords.boundsInRoot()
+                                    }
+                                },
+                        ) {
+                            AppIcon(app, 76.dp, track = IconTrack.DETAIL, dimmed = app.hidden)
+                        }
+                        Spacer(Modifier.width(16.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = app.displayLabel,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = scheme.onSurface,
+                                maxLines = 2,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            )
+                            if (app.renamed) {
+                                Text(
+                                    text = stringResource(R.string.original_name_fmt, app.label),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = scheme.primary,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                )
+                            }
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = app.pkg,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = scheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Pill(stringResource(profileLabel(app.profile)))
+                                if (app.isSystem) Pill(stringResource(R.string.pill_system))
+                                if (app.isModule) Pill(stringResource(R.string.pill_module))
+                                if (app.hidden) Pill(stringResource(R.string.pill_hidden))
+                            }
+                        }
+                    }
                 }
-            }
-        }
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(scroll)
-                .padding(horizontal = 16.dp),
-        ) {
-            Spacer(Modifier.height(barDp + 8.dp))
-            // header
-            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                Spacer(Modifier.size(120.dp))
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    text = app.displayLabel,
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.graphicsLayer { alpha = (1f - collapseP() * 2f).coerceIn(0f, 1f) },
-                )
-                if (app.renamed) {
-                    Text(
-                        text = stringResource(R.string.original_name_fmt, app.label),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = scheme.primary,
-                    )
-                }
-                Text(
-                    text = app.pkg,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = scheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Pill(stringResource(profileLabel(app.profile)))
-                    if (app.isSystem) Pill(stringResource(R.string.pill_system))
-                    if (app.isModule) Pill(stringResource(R.string.pill_module))
-                    if (app.hidden) Pill(stringResource(R.string.pill_hidden))
-                }
-            }
 
             if (siblings.size > 1) {
                 SectionTitle(stringResource(R.string.detail_profiles))
@@ -317,28 +327,10 @@ fun DetailScreen(
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                     modifier = Modifier
                         .align(Alignment.CenterStart)
-                        .padding(start = 104.dp, end = 16.dp)
-                        .graphicsLayer { alpha = ((collapseP() - 0.5f) * 2f).coerceIn(0f, 1f) },
+                        .padding(start = 56.dp, end = 16.dp)
+                        .graphicsLayer { alpha = ((collapseP() - 0.35f) * 2f).coerceIn(0f, 1f) },
                 )
             }
-        }
-
-        // The app icon: rests in the header, then slides up and left and shrinks into the bar as the page scrolls.
-        Box(
-            Modifier
-                .size(120.dp)
-                .graphicsLayer {
-                    val p = collapseP()
-                    val cx = androidx.compose.ui.util.lerp(widthPx / 2f, cxt, p)
-                    val cy = androidx.compose.ui.util.lerp(c0 - scroll.value, ct, p)
-                    val sc = androidx.compose.ui.util.lerp(1f, 0.3f, p)
-                    translationX = cx - size.width / 2f
-                    translationY = cy - size.height / 2f
-                    scaleX = sc
-                    scaleY = sc
-                },
-        ) {
-            AppIcon(app, 120.dp, track = IconTrack.DETAIL, dimmed = app.hidden)
         }
     }
     }
