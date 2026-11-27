@@ -144,6 +144,7 @@ fun DetailScreen(
     val travel = with(density) { 84.dp.toPx() }.coerceAtLeast(1f)
     val collapseP: () -> Float = { (scroll.value / travel).coerceIn(0f, 1f) }
     val flightReg = dev.hfw.ui.components.LocalIconFlight.current
+    val blurredIcon = dev.hfw.ui.components.rememberBlurredAppIcon(app)
 
     Surface(modifier = modifier, color = scheme.background, contentColor = scheme.onBackground) {
         Box(Modifier.fillMaxSize()) {
@@ -159,7 +160,6 @@ fun DetailScreen(
                     shape = RoundedCornerShape(28.dp),
                     color = scheme.surfaceContainerLow,
                 ) {
-                    val blurredIcon = dev.hfw.ui.components.rememberBlurredAppIcon(app)
                     Box(Modifier.fillMaxWidth()) {
                         if (blurredIcon != null) {
                             androidx.compose.foundation.Image(
@@ -328,15 +328,40 @@ fun DetailScreen(
             Spacer(Modifier.height(32.dp))
         }
 
-        // Top bar: opaque strip over the scrolling content, with the back button and (once collapsed) the app name.
+        // Top bar: opaque strip over the scrolling content, fading into the hero card's blurred tint when scrolled.
         Box(
             Modifier.fillMaxWidth().height(barDp)
                 .clip(RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp))
                 .drawBehind {
-                    // Same colour as the page at the top, fading to the card colour as the icon collapses into the bar.
-                    drawRect(androidx.compose.ui.graphics.lerp(scheme.background, scheme.surfaceContainer, collapseP()))
+                    drawRect(androidx.compose.ui.graphics.lerp(scheme.background, scheme.surfaceContainerLow, collapseP()))
                 },
         ) {
+            if (blurredIcon != null) {
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .graphicsLayer { alpha = collapseP() },
+                ) {
+                    androidx.compose.foundation.Image(
+                        bitmap = blurredIcon,
+                        contentDescription = null,
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier.matchParentSize(),
+                    )
+                    Box(
+                        Modifier
+                            .matchParentSize()
+                            .background(
+                                androidx.compose.ui.graphics.Brush.horizontalGradient(
+                                    colors = listOf(
+                                        scheme.surfaceContainerLow.copy(alpha = 0.62f),
+                                        scheme.surfaceContainerLow.copy(alpha = 0.86f),
+                                    ),
+                                ),
+                            ),
+                    )
+                }
+            }
             Box(Modifier.fillMaxSize().padding(top = with(density) { statusPx.toDp() })) {
                 IconButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart).padding(start = 4.dp)) {
                     Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = stringResource(R.string.back), tint = scheme.onSurface)
