@@ -1,0 +1,377 @@
+package dev.hfw.ui.screens
+
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material.icons.rounded.SelectAll
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.RadioButtonUnchecked
+import dev.hfw.data.AppSort
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
+import androidx.compose.material3.Switch
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Sort
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import dev.hfw.R
+import dev.hfw.HfwViewModel
+import dev.hfw.data.AppFilter
+import dev.hfw.data.AppItem
+import dev.hfw.data.supported
+import dev.hfw.ui.components.AppIcon
+import dev.hfw.ui.components.SharedCtx
+import dev.hfw.ui.components.HfwTopBar
+import dev.hfw.ui.components.SortMenuButton
+import dev.hfw.ui.components.glassSource
+import dev.hfw.ui.components.rememberGlassLayers
+import dev.hfw.ui.components.SystemAppsWarning
+import dev.hfw.ui.components.StatusBadges
+import dev.hfw.ui.components.sortLabel
+
+@Composable
+fun AppsScreen(
+    vm: HfwViewModel,
+    listState: LazyListState,
+    shared: SharedCtx?,
+    onOpenApp: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val layers = rememberGlassLayers()
+    var showSystemWarning by remember { mutableStateOf(false) }
+    val shown by remember { derivedStateOf { vm.filteredApps() } }
+
+    Scaffold(
+        modifier = modifier.nestedScroll(scroll.nestedScrollConnection),
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            HfwTopBar(
+                title = if (vm.selecting) {
+                    stringResource(R.string.sel_count_fmt, vm.selection.size)
+                } else {
+                    stringResource(R.string.apps_title)
+                },
+                scroll = scroll,
+                layers = layers,
+                actions = {
+                    if (vm.selecting) {
+                        IconButton(onClick = { vm.selectAll(shown.map { it.key }) }) {
+                            Icon(Icons.Rounded.SelectAll, contentDescription = stringResource(R.string.sel_select_all))
+                        }
+                        IconButton(onClick = { vm.clearSelection() }) {
+                            Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.sel_close))
+                        }
+                    }
+                },
+            )
+        },
+    ) { pad ->
+        PullToRefreshBox(
+            isRefreshing = vm.refreshing,
+            onRefresh = { vm.refresh() },
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            LazyColumn(
+                state = listState,
+                contentPadding = PaddingValues(top = pad.calculateTopPadding(), bottom = pad.calculateBottomPadding() + 120.dp),
+                modifier = Modifier.fillMaxSize().glassSource(layers),
+            ) {
+                item(key = "search") {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SearchField(query = vm.query, onQuery = { vm.query = it }, modifier = Modifier.weight(1f))
+                        Spacer(Modifier.width(8.dp))
+                        SortMenuButton(
+                            title = stringResource(R.string.sort_title),
+                            options = AppSort.entries.map { it to sortLabel(it) },
+                            selected = vm.sort,
+                            highlighted = vm.sort != AppSort.CHANGED_FIRST || vm.showSystemApps,
+                            onSelect = { vm.sort = it },
+                            footer = { close ->
+                                HorizontalDivider(Modifier.padding(vertical = 6.dp, horizontal = 8.dp))
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(20.dp))
+                                        .clickable {
+                                            if (vm.showSystemApps) {
+                                                vm.showSystemApps = false
+                                            } else if (vm.systemWarningAccepted) {
+                                                vm.showSystemApps = true
+                                            } else {
+                                                close()
+                                                showSystemWarning = true
+                                            }
+                                        }
+                                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(stringResource(R.string.show_system_apps), style = MaterialTheme.typography.bodyLarge)
+                                        Text(
+                                            stringResource(R.string.show_system_apps_sub),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    Switch(checked = vm.showSystemApps, onCheckedChange = null)
+                                }
+                            },
+                        )
+                    }
+                }
+                item(key = "filters") {
+                    FilterRow(vm, modifier = Modifier.padding(vertical = 8.dp))
+                }
+                item(key = "count") {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = stringResource(R.string.apps_count_fmt, shown.size),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            text = sortLabel(vm.sort),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+                if (shown.isEmpty()) {
+                    item(key = "empty") {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(48.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Icon(
+                                Icons.Rounded.Search,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Text(
+                                text = stringResource(R.string.apps_empty),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                            )
+                        }
+                    }
+                }
+                items(shown, key = { it.key }) { app ->
+                    AppRow(
+                        app = app,
+                        shared = shared,
+                        selecting = vm.selecting,
+                        selected = app.key in vm.selection,
+                        onLongClick = { vm.toggleSelect(app.key) },
+                        onClick = { if (vm.selecting) vm.toggleSelect(app.key) else onOpenApp(app.key) },
+                        modifier = Modifier.animateItem().padding(horizontal = 16.dp, vertical = 4.dp),
+                    )
+                }
+            }
+        }
+    }
+
+    if (showSystemWarning) {
+        SystemAppsWarning(
+            onCancel = { showSystemWarning = false }, // cancelled: the next attempt shows the warning again
+            onConfirm = {
+                vm.systemWarningAccepted = true
+                vm.showSystemApps = true
+                showSystemWarning = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun SearchField(query: String, onQuery: (String) -> Unit, modifier: Modifier = Modifier) {
+    val transparent = Color.Transparent
+    TextField(
+        value = query,
+        onValueChange = onQuery,
+        modifier = modifier.fillMaxWidth(),
+        singleLine = true,
+        shape = CircleShape,
+        placeholder = { Text(stringResource(R.string.search_hint)) },
+        leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+        trailingIcon = {
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { onQuery("") }) {
+                    Icon(Icons.Rounded.Close, contentDescription = null)
+                }
+            }
+        },
+        colors = TextFieldDefaults.colors(
+            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            focusedIndicatorColor = transparent,
+            unfocusedIndicatorColor = transparent,
+            disabledIndicatorColor = transparent,
+            errorIndicatorColor = transparent,
+        ),
+    )
+}
+
+@Composable
+private fun FilterRow(vm: HfwViewModel, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        FilterChip(
+            selected = vm.filters.isEmpty(),
+            onClick = { vm.clearFilters() },
+            label = { Text(stringResource(R.string.filter_all)) },
+            leadingIcon = if (vm.filters.isEmpty()) {
+                { Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(FilterChipDefaults.IconSize)) }
+            } else {
+                null
+            },
+        )
+        listOf(
+            AppFilter.ICON_CHANGED to R.string.filter_icon,
+            AppFilter.RENAMED to R.string.filter_renamed,
+            AppFilter.HIDDEN to R.string.filter_hidden,
+        ).filter { it.first.supported() }.forEach { (filter, label) ->
+            val selected = filter in vm.filters
+            FilterChip(
+                selected = selected,
+                onClick = { vm.toggleFilter(filter) },
+                label = { Text(stringResource(label)) },
+                leadingIcon = if (selected) {
+                    { Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(FilterChipDefaults.IconSize)) }
+                } else {
+                    null
+                },
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun AppRow(
+    app: AppItem,
+    shared: SharedCtx?,
+    selecting: Boolean,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(24.dp)
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        shape = shape,
+        color = when {
+            selected -> scheme.primaryContainer
+            app.hidden -> scheme.surfaceContainerLow
+            else -> scheme.surfaceContainerHigh
+        },
+    ) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            AppIcon(app, 52.dp, shared = shared, dimmed = app.hidden)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = app.displayLabel,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (app.hidden && !selected) scheme.onSurfaceVariant else if (selected) scheme.onPrimaryContainer else scheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (app.renamed) {
+                    Text(
+                        text = stringResource(R.string.original_name_fmt, app.label),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = scheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Text(
+                    text = "${formatSize(app.sizeMb)} · ${app.pkg}" + if (app.userId != 0) " · #${app.userId}" else "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (selected) scheme.onPrimaryContainer.copy(alpha = 0.8f) else scheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (selecting) {
+                Icon(
+                    imageVector = if (selected) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
+                    contentDescription = null,
+                    tint = if (selected) scheme.primary else scheme.outline,
+                )
+            } else {
+                StatusBadges(app)
+            }
+        }
+    }
+}
+
+fun formatSize(mb: Float): String =
+    if (mb >= 1000f) String.format(java.util.Locale.getDefault(), "%.1f GB", mb / 1024f)
+    else String.format(java.util.Locale.getDefault(), "%.0f MB", mb)

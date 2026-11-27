@@ -7,13 +7,14 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
-        android:name=".app.FadaliasApplication"
+        android:name=".app.HfwApplication"
         android:allowBackup="false"
         android:enableOnBackInvokedCallback="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:localeConfig="@xml/locales_config"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Fadalias"
+        android:theme="@style/Theme.HFW"
         tools:ignore="QueryAllPackagesPermission">
 
         <meta-data android:name="xposedmodule" android:value="true" />

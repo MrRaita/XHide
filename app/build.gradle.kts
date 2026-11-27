@@ -17,7 +17,7 @@ configurations {
 }
 
 android {
-    namespace = "dev.fadalias"
+    namespace = "dev.hfw"
     compileSdk = 37
 
     sourceSets {
@@ -33,14 +33,14 @@ android {
         versionName = "0.1.0"
     }
 
-    val customKeystore = System.getenv("FADALIAS_KEYSTORE")?.takeIf { it.isNotEmpty() && file(it).exists() }
+    val customKeystore = System.getenv("HFW_KEYSTORE")?.takeIf { it.isNotEmpty() && file(it).exists() }
     if (customKeystore != null) {
         signingConfigs {
-            create("fadaliasRelease") {
+            create("hfwRelease") {
                 storeFile = file(customKeystore)
-                storePassword = System.getenv("FADALIAS_KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("FADALIAS_KEY_ALIAS")
-                keyPassword = System.getenv("FADALIAS_KEY_PASSWORD")
+                storePassword = System.getenv("HFW_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("HFW_KEY_ALIAS")
+                keyPassword = System.getenv("HFW_KEY_PASSWORD")
             }
         }
     }
@@ -50,12 +50,12 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Personal sideload builds are signed with the debug key unless FADALIAS_KEYSTORE* is set.
-            signingConfig = signingConfigs.getByName(if (customKeystore != null) "fadaliasRelease" else "debug")
+            // Personal sideload builds are signed with the debug key unless HFW_KEYSTORE* is set.
+            signingConfig = signingConfigs.getByName(if (customKeystore != null) "hfwRelease" else "debug")
         }
         all {
             // Optional pin: only a manager signed with this certificate may talk to the hook (empty = package name + any signature).
-            buildConfigField("String", "PINNED_CERT_SHA256", "\"${System.getenv("FADALIAS_CERT_SHA256") ?: ""}\"")
+            buildConfigField("String", "PINNED_CERT_SHA256", "\"${System.getenv("HFW_CERT_SHA256") ?: ""}\"")
         }
     }
 
@@ -100,10 +100,10 @@ val verifyApi101Core by tasks.registering(JavaExec::class) {
     description = "Compiles the modern core against libxposed API 101 only."
 
     val sources = files(
-        fileTree("src/main/java/dev/fadalias/core"),
-        fileTree("src/main/java/dev/fadalias/state"),
-        file("src/main/java/dev/fadalias/Identity.kt"),
-        file("src/main/java/dev/fadalias/data/DurableFiles.kt"),
+        fileTree("src/main/java/dev/hfw/core"),
+        fileTree("src/main/java/dev/hfw/state"),
+        file("src/main/java/dev/hfw/Identity.kt"),
+        file("src/main/java/dev/hfw/data/DurableFiles.kt"),
         fileTree("src/api101/java"),
         fileTree(layout.buildDirectory.dir("generated/source/buildConfig/debug")) { include("**/BuildConfig.java") },
     )

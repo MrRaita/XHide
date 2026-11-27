@@ -14,7 +14,7 @@ The companion app hides features the running Android version does not support.
 
 ## Architecture
 - **Hook (`system_server`):** `LauncherAppsService$LauncherAppsImpl`, `ShortcutService`, `ComputerEngine` / `PackageManagerService` (`queryIntentActivitiesInternal`), `UserManagerService.getProfileIds`, `IdmapDaemon` (Android 14+), and `PackageInfoUtils`.
-- **IPC:** commands travel in the package-name argument of `getActivityList` (`__hfw_ipc__:ping|status|log|reload|state.get|state.update:<json>|all_users`); the reply is JSON in `ApplicationInfo.metaData["dev.hfw.REPLY"]`. An empty list means rejected or unreachable. The caller is verified by package name and signature (pin it with `FADALIAS_CERT_SHA256`).
+- **IPC:** commands travel in the package-name argument of `getActivityList` (`__hfw_ipc__:ping|status|log|reload|state.get|state.update:<json>|all_users`); the reply is JSON in `ApplicationInfo.metaData["dev.hfw.REPLY"]`. An empty list means rejected or unreachable. The caller is verified by package name and signature (pin it with `HFW_CERT_SHA256`).
 - **State:** `/data/system/hfw/state` (+ `.bak`), written atomically with fsync; icons in `icons/<pkg>.png` (and per-user subdirectories). The companion app keeps its own `rules.json` and `pending.json` (offline queue); the hook state is a replica. Sync replays the queue, compares canonical hashes, and reconciles mismatches.
 - **Backup & Restore:** Full `.zip` export/import of rules, labels, hide choices, and custom icons via `BackupManager`.
 - **Icon layer:** `FabricatedOverlay` (Android 14+) fed from the manager's `RulesProvider` (uid 1000 only), with `IdmapDaemon` `<overlayable>` bypass for `hfw_*` overlays so pre-installed/system apps work too. The SELinux policy lives in `sepolicy-module/`; the app offers it as a zip ("Save module file").
@@ -33,8 +33,8 @@ Requires JDK 21 and the Android SDK (platform 37).
 ./gradlew :app:verifyApi101Core :app:testDebugUnitTest
 ./gradlew assembleDebug assembleRelease
 ```
-Release builds are R8-minified and signed with the debug key unless `FADALIAS_KEYSTORE`, `FADALIAS_KEYSTORE_PASSWORD`, `FADALIAS_KEY_ALIAS` and `FADALIAS_KEY_PASSWORD` are set.
-`scripts/pack-sepolicy.sh` rebuilds the bundled SELinux zip (`app/src/main/assets/fadalias_sepolicy.zip`) after editing `sepolicy-module/`.
+Release builds are R8-minified and signed with the debug key unless `HFW_KEYSTORE`, `HFW_KEYSTORE_PASSWORD`, `HFW_KEY_ALIAS` and `HFW_KEY_PASSWORD` are set.
+`scripts/pack-sepolicy.sh` rebuilds the bundled SELinux zip (`app/src/main/assets/hfw_sepolicy.zip`) after editing `sepolicy-module/`.
 
 ## Install
 1. Install the APK, enable the module in LSPosed/Vector (scope: `System Framework`) and reboot (or hot-reload on API 102).

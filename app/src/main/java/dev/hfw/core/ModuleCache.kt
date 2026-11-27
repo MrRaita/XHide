@@ -1,0 +1,342 @@
+package dev.hfw.core
+
+import android.content.Context
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import android.os.Binder
+import android.os.Process
+import android.os.UserHandle
+import dev.hfw.data.DurableFiles
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledThreadPoolExecutor
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+
+/**
+ * Universal O(1) Xposed Module Detector.
+ *
+ * Detects all 3 generations of Xposed modules across Android 11–17 (including split APKs
+ * and disguised package names such as `com.android.hmal`):
+ * 1. Manifest Meta-Data (`xposedmodule`, `xposedminversion`, `xposeddescription`, `xposedscope`)
+ * 2. Classic Xposed API (`assets/xposed_init` inside base or split APK)
+ * 3. Modern LibXposed API 100 (`META-INF/xposed/module.prop`, `java_init.list`, `scope.list`)
+ *
+ * Keyed by `packageName|sourceDir` so package updates automatically invalidate stale entries
+ * without requiring broadcast receivers or locking PackageManager.
+ */
+object ModuleCache {
+    private const val TAG = dev.hfw.Identity.TAG
+
+    // Key: "packageName|sourceDir" -> Value: true if Xposed module, false otherwise
+    private const val MAX_CACHE_ENTRIES = 2048
+
+    // Lock-free reads on Binder threads; bounded to MAX_CACHE_ENTRIES.
+    private val apkModuleCache = ConcurrentHashMap<String, Boolean>(256)
+
+    // Verdicts are persisted to disk so each boot does not re-open every APK on Binder threads.
+    // Writes are debounced so the burst of first-boot detections lands in a single file write.
+    private const val PERSIST_DELAY_MS = 5_000L
+
+    @Volatile
+    private var persistedLoaded = false
+    private val persistLock = Any()
+    private val persistScheduled = AtomicBoolean(false)
+    private var persistExecutor: ScheduledExecutorService = newPersistExecutor()
+
+    private fun isSystemServer(): Boolean = Process.myUid() == Process.SYSTEM_UID
+
+    @Volatile
+    private var backend: HookBackend? = null
+    private val lifecycleLock = Any()
+
+    @Volatile
+    private var acceptingReload = false
+
+    fun resumeAfterHotReload() = resumeExecutor()
+
+    private fun resumeExecutor() {
+        synchronized(lifecycleLock) {
+            acceptingReload = false
+            if (persistExecutor.isShutdown) persistExecutor = newPersistExecutor()
+        }
+        persistScheduled.set(false)
+    }
+
+    fun prepareForHotReload(): Boolean {
+        val executor: ScheduledExecutorService
+        synchronized(lifecycleLock) {
+            acceptingReload = true
+            executor = persistExecutor
+        }
+        persistScheduled.set(false)
+        persistNow()
+        executor.shutdownNow()
+        try {
+            if (!executor.awaitTermination(500, TimeUnit.MILLISECONDS)) {
+                resumeExecutor()
+                return false
+            }
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            resumeExecutor()
+            return false
+        }
+        return true
+    }
+
+    private fun ensureInitialized(hookBackend: HookBackend) {
+        if (backend == null) {
+            synchronized(lifecycleLock) {
+                if (backend == null) backend = hookBackend
+            }
+        }
+    }
+
+    private fun newPersistExecutor(): ScheduledExecutorService =
+        ScheduledThreadPoolExecutor(1) { r ->
+            Thread(r, "hfw-modcache").apply {
+                isDaemon = true
+                priority = Thread.MIN_PRIORITY
+            }
+        }.apply {
+            executeExistingDelayedTasksAfterShutdownPolicy = false
+        }
+
+    private fun ensurePersistedLoaded() {
+        if (persistedLoaded) return
+        synchronized(persistLock) {
+            if (persistedLoaded) return
+            try {
+                if (!isSystemServer()) return
+                val file = File(ModuleCacheFile.PATH)
+                if (!file.isFile) return
+                if (file.length() > ModuleCacheFile.MAX_FILE_BYTES) return
+                val loaded = ModuleCacheFile.decode(file.readText(), ModuleCacheFile.DETECTION_RULES_VERSION, MAX_CACHE_ENTRIES)
+                for ((key, isModule) in loaded) {
+                    apkModuleCache.putIfAbsent(key, isModule)
+                }
+                backend?.log("[$TAG] Loaded ${loaded.size} persisted module verdicts")
+            } catch (t: Throwable) {
+                backend?.log("[$TAG] Could not load module cache: ${t.message}")
+            } finally {
+                persistedLoaded = true
+            }
+        }
+    }
+
+    private fun schedulePersist() {
+        if (!isSystemServer()) return
+        if (acceptingReload) return
+        if (!persistScheduled.compareAndSet(false, true)) return
+        try {
+            persistExecutor.schedule({
+                persistScheduled.set(false)
+                persistNow()
+            }, PERSIST_DELAY_MS, TimeUnit.MILLISECONDS)
+        } catch (t: Throwable) {
+            persistScheduled.set(false)
+            backend?.log("[$TAG] Could not schedule module cache write: ${t.message}")
+        }
+    }
+
+    private fun persistNow() {
+        if (!persistedLoaded) return
+        synchronized(persistLock) {
+            try {
+                val snapshot = HashMap(apkModuleCache)
+                // Drop verdicts for APKs that no longer exist (uninstalled or replaced packages).
+                val live = snapshot.filterKeys { File(ModuleCacheFile.sourceDirOf(it)).exists() }
+                val bytes = ModuleCacheFile.encode(live, ModuleCacheFile.DETECTION_RULES_VERSION).toByteArray(Charsets.UTF_8)
+                if (bytes.size > ModuleCacheFile.MAX_FILE_BYTES) return
+                File(ModuleCacheFile.PATH).parentFile?.mkdirs()
+                DurableFiles.writeAtomically(ModuleCacheFile.PATH, bytes)
+            } catch (t: Throwable) {
+                backend?.log("[$TAG] Could not persist module cache: ${t.message}")
+            }
+        }
+    }
+
+    internal fun isXposedModule(
+        packageName: String,
+        appInfo: ApplicationInfo?,
+        context: Context?,
+        userHandle: UserHandle?,
+        backend: HookBackend
+    ): Boolean {
+        ensureInitialized(backend)
+        if (packageName == "android") {
+            return false
+        }
+
+        val resolvedAppInfo = (appInfo ?: resolveAppInfoSafely(packageName, context, userHandle, backend)) ?: return false
+        val sourceDir = resolvedAppInfo.sourceDir ?: resolvedAppInfo.publicSourceDir ?: return false
+
+        // Skip unmodified built-in ROM partition apps (/system, /product, /system_ext, /vendor, /apex)
+        // while allowing any user-installed or updated app in /data/ (even if named com.android.*)
+        val isPureRomSystemApp = (resolvedAppInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0 &&
+            (resolvedAppInfo.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0 &&
+            !sourceDir.startsWith("/data/")
+        if (isPureRomSystemApp) {
+            return false
+        }
+
+        val cacheKey = "$packageName|$sourceDir"
+        ensurePersistedLoaded()
+        apkModuleCache[cacheKey]?.let { return it }
+
+        // A failed APK read is not a verdict: return the safe default without caching it, so a
+        // transient I/O error cannot persist a module as "not a module" across boots.
+        val detected = scanModule(packageName, resolvedAppInfo, context, userHandle, backend) ?: return false
+        if (apkModuleCache.size >= MAX_CACHE_ENTRIES) {
+            // Evict non-module entries first so detected modules stay cached for getDetectedModulePackages()
+            apkModuleCache.entries.removeIf { !it.value }
+            if (apkModuleCache.size >= MAX_CACHE_ENTRIES) apkModuleCache.clear()
+        }
+        apkModuleCache[cacheKey] = detected
+        schedulePersist()
+        if (detected) {
+            backend?.log("[$TAG] Detected Xposed module: $packageName ($sourceDir)")
+        }
+        return detected
+    }
+
+    private fun resolveAppInfoSafely(
+        packageName: String,
+        context: Context?,
+        userHandle: UserHandle?,
+        backend: HookBackend
+    ): ApplicationInfo? {
+        if (context == null) return null
+        val token = Binder.clearCallingIdentity()
+        return try {
+            val pm = context.packageManager
+            if (userHandle != null) {
+                try {
+                    val userId = userIdOf(userHandle, backend)
+                    val info = backend.callMethod(
+                        pm,
+                        "getApplicationInfoAsUser",
+                        packageName,
+                        PackageManager.GET_META_DATA,
+                        userId
+                    ) as? ApplicationInfo
+                    if (info != null) return info
+                } catch (_: Throwable) {
+                }
+                // Do not leak User 0 info when resolving for a non-null secondary profile
+                null
+            } else {
+                pm.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
+            }
+        } catch (_: Throwable) {
+            null
+        } finally {
+            Binder.restoreCallingIdentity(token)
+        }
+    }
+
+    internal fun detectModuleFromAppInfo(
+        packageName: String,
+        appInfo: ApplicationInfo,
+        context: Context?,
+        userHandle: UserHandle?,
+        backend: HookBackend
+    ): Boolean = scanModule(packageName, appInfo, context, userHandle, backend) ?: false
+
+    private val XPOSED_META_KEYS = listOf(
+        "xposedmodule",
+        "xposedminversion",
+        "xposeddescription",
+        "xposedscope",
+        "libxposed",
+        "libxposed_minversion",
+        "libxposed_api",
+        "libxposed_scope",
+    )
+
+    internal fun hasXposedMetadata(meta: android.os.Bundle?): Boolean =
+        meta != null && XPOSED_META_KEYS.any { meta.containsKey(it) }
+
+    /**
+     * Checks base and split APKs in `/data/` for Xposed/LibXposed markers.
+     * Returns `true` if found, `false` if none found, or `null` if an APK could not be read.
+     */
+    internal fun hasXposedArchiveMarkers(appInfo: ApplicationInfo): Boolean? {
+        val paths = ArrayList<String>(1 + (appInfo.splitSourceDirs?.size ?: 0))
+        (appInfo.sourceDir ?: appInfo.publicSourceDir)?.let { paths.add(it) }
+        appInfo.splitSourceDirs?.forEach { if (it != null) paths.add(it) }
+        for (path in paths) {
+            if (!path.startsWith("/data/")) continue
+            try {
+                java.util.zip.ZipFile(File(path)).use { zip ->
+                    if (zip.getEntry("META-INF/xposed/module.prop") != null ||
+                        zip.getEntry("assets/xposed_init") != null
+                    ) {
+                        return true
+                    }
+                }
+            } catch (_: Throwable) {
+                return null
+            }
+        }
+        return false
+    }
+
+    /**
+     * Returns true/false for a definitive verdict, or null when the APK could not be read
+     * (transient I/O error, file replaced mid-scan). Null results must not be cached.
+     */
+    private fun scanModule(
+        packageName: String,
+        appInfo: ApplicationInfo,
+        context: Context?,
+        userHandle: UserHandle?,
+        backend: HookBackend
+    ): Boolean? {
+        // 1. Fast manifest meta-data check (Classic Xposed & Modern LibXposed)
+        // Hook-provided ApplicationInfo often lacks metaData. If the GET_META_DATA re-query also
+        // fails, absence of metadata is unknown rather than proven, so a negative verdict from the
+        // archive check alone must not be persisted.
+        var metadataChecked = false
+        try {
+            val meta = if (appInfo.metaData != null) {
+                metadataChecked = true
+                appInfo.metaData
+            } else {
+                val resolved = resolveAppInfoSafely(packageName, context, userHandle, backend)
+                if (resolved != null) metadataChecked = true
+                resolved?.metaData
+            }
+            if (hasXposedMetadata(meta)) return true
+        } catch (_: Throwable) {
+        }
+
+        // 2. Fast APK central directory inspection for modern LibXposed module.prop or classic xposed_init
+        val archiveResult = hasXposedArchiveMarkers(appInfo) ?: return null
+        if (archiveResult) return true
+
+        // No archive markers, but metadata could not be inspected: report "unknown" so the
+        // caller does not cache or persist a possibly false negative.
+        if (!metadataChecked) return null
+        return false
+    }
+
+    fun getDetectedModulePackages(): Set<String> {
+        val result = mutableSetOf<String>()
+        for ((key, isModule) in apkModuleCache) {
+            if (isModule) {
+                val pkg = key.substringBefore('|')
+                if (pkg.isNotEmpty()) {
+                    result.add(pkg)
+                }
+            }
+        }
+        return result
+    }
+
+    fun clearCache() {
+        apkModuleCache.clear()
+    }
+}
