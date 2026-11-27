@@ -61,7 +61,7 @@ object Palettes {
         Color.hsl(((h % 360f) + 360f) % 360f, s.coerceIn(0f, 1f), l.coerceIn(0f, 1f))
 
     private fun onColor(bg: Color): Color =
-        if (bg.luminance() > 0.179f) Color(0xFF121212) else Color.White
+        if (bg.luminance() > 0.179f) Color.Black else Color.White
 
     /** Sample color shown in the picker */
     fun swatch(p: Palette): Color =
