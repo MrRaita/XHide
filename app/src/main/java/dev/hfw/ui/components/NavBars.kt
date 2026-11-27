@@ -14,6 +14,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -114,7 +115,7 @@ fun ExpandingNavBar(
                         .height(56.dp)
                         .clip(CircleShape)
                         .background(bg)
-                        .clickable(role = Role.Tab) { onSelect(tab) },
+                        .selectable(selected = selected, role = Role.Tab, onClick = { onSelect(tab) }),
                     contentAlignment = Alignment.Center,
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -187,7 +188,7 @@ fun FloatingNavBar(
                         Modifier
                             .size(itemSize)
                             .clip(RoundedCornerShape(20.dp))
-                            .clickable(role = Role.Tab) { onSelect(tab) },
+                            .selectable(selected = selected, role = Role.Tab, onClick = { onSelect(tab) }),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(tab.icon, contentDescription = stringResource(tab.titleRes), tint = fg)

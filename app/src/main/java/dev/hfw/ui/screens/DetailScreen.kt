@@ -2,6 +2,7 @@ package dev.hfw.ui.screens
 
 import android.text.format.DateFormat
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.clickable
@@ -202,7 +203,7 @@ fun DetailScreen(
 
             if (siblings.size > 1) {
                 SectionTitle(stringResource(R.string.detail_profiles))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     siblings.forEach { sib ->
                         androidx.compose.material3.FilterChip(
                             selected = sib.key == app.key,

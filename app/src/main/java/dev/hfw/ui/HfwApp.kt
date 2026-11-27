@@ -336,7 +336,7 @@ private fun MainShell(
         preloadPages = MainTab.entries.size - 1
     }
     // Home's endless decoration (the drifting eyes) only runs while Home is at least partly on screen.
-    val homeActive by remember {
+    val homeActive by remember(interactive) {
         derivedStateOf { interactive && pagerState.currentPage + pagerState.currentPageOffsetFraction < 1f }
     }
     var backActive by remember { mutableStateOf(false) }
@@ -373,7 +373,7 @@ private fun MainShell(
         }
     }
     // Safety net: never stay half-way between pages after an interrupted gesture.
-    LaunchedEffect(backActive) {
+    LaunchedEffect(backActive, tab) {
         if (!backActive) {
             delay(500)
             if (!backActive && (pagerState.currentPage != tab.ordinal ||

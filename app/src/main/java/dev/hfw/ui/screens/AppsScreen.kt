@@ -9,6 +9,8 @@ import dev.hfw.data.AppSort
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.selected as semanticsSelected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.material3.Switch
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -309,6 +311,7 @@ private fun AppRow(
             .fillMaxWidth()
             .pressScale(source)
             .clip(shape)
+            .semantics { if (selecting) semanticsSelected = selected }
             .combinedClickable(interactionSource = source, indication = androidx.compose.material3.ripple(), onClick = onClick, onLongClick = onLongClick),
         shape = shape,
         color = when {

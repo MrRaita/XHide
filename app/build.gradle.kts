@@ -33,14 +33,16 @@ android {
         versionName = "0.1.0"
     }
 
-    val customKeystore = System.getenv("HFW_KEYSTORE")?.takeIf { it.isNotEmpty() && file(it).exists() }
+    val customKeystore = (System.getenv("HFW_KEYSTORE")?.takeIf { it.isNotEmpty() }
+        ?: System.getenv("FADALIAS_KEYSTORE")?.takeIf { it.isNotEmpty() })
+        ?.takeIf { file(it).exists() }
     if (customKeystore != null) {
         signingConfigs {
             create("hfwRelease") {
                 storeFile = file(customKeystore)
-                storePassword = System.getenv("HFW_KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("HFW_KEY_ALIAS")
-                keyPassword = System.getenv("HFW_KEY_PASSWORD")
+                storePassword = System.getenv("HFW_KEYSTORE_PASSWORD")?.takeIf { it.isNotEmpty() } ?: System.getenv("FADALIAS_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("HFW_KEY_ALIAS")?.takeIf { it.isNotEmpty() } ?: System.getenv("FADALIAS_KEY_ALIAS")
+                keyPassword = System.getenv("HFW_KEY_PASSWORD")?.takeIf { it.isNotEmpty() } ?: System.getenv("FADALIAS_KEY_PASSWORD")
             }
         }
     }
@@ -55,7 +57,10 @@ android {
         }
         all {
             // Optional pin: only a manager signed with this certificate may talk to the hook (empty = package name + any signature).
-            buildConfigField("String", "PINNED_CERT_SHA256", "\"${System.getenv("HFW_CERT_SHA256") ?: ""}\"")
+            val pinnedCert = System.getenv("HFW_CERT_SHA256")?.takeIf { it.isNotEmpty() }
+                ?: System.getenv("FADALIAS_CERT_SHA256")
+                ?: ""
+            buildConfigField("String", "PINNED_CERT_SHA256", "\"$pinnedCert\"")
         }
     }
 

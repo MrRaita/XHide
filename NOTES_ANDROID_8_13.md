@@ -14,7 +14,7 @@ Eğer Android 8–13 desteği veya SELinux modülsüz ikon değiştirme istenirs
   2. `android.app.ApplicationPackageManager.getDrawable(String packageName, int resId, ApplicationInfo appInfo)`
 - **Artıları:**
   - Android 8'den 17'ye kadar tüm sürümlerde çalışır.
-  - `idmap2d`, `FabricatedOverlay`, `ParcelFileDescriptor` ve **SELinux modülü (`hfw_sepolicy`) gerekmez**.
+  - `idmap2d`, `FabricatedOverlay`, `ParcelFileDescriptor`, and the SELinux module (`hfw_sepolicy`) are not required.
   - `<overlayable>` engeline takılmaz; değişmeyen uygulamalarda `O(1)` erken çıkışla çok yüksek performans verir.
 - **Eksisi:** Tek başına `System Framework` scope'u yetmez; kullanıcının launcher uygulamasını da scope'a eklemesi gerekir.
 

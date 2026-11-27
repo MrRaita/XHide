@@ -7,6 +7,7 @@ import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 
 /** Ready-made color palette: the scheme is generated from a main hue and a saturation multiplier. */
 data class Palette(
@@ -59,6 +60,9 @@ object Palettes {
     private fun c(h: Float, s: Float, l: Float): Color =
         Color.hsl(((h % 360f) + 360f) % 360f, s.coerceIn(0f, 1f), l.coerceIn(0f, 1f))
 
+    private fun onColor(bg: Color): Color =
+        if (bg.luminance() > 0.179f) Color(0xFF121212) else Color.White
+
     /** Sample color shown in the picker */
     fun swatch(p: Palette): Color =
         if (p.tertiaryHue != null) c(p.tertiaryHue, 0.85f, 0.50f) else c(p.hue, 0.30f + 0.35f * p.sat, 0.45f)
@@ -72,12 +76,15 @@ object Palettes {
         val sS = 0.30f * k
         val sT = if (p.tertiaryHue != null) 0.80f else 0.40f * k
         val n = 0.04f + 0.06f * k // slight tint of the neutral surfaces
+        val primary = c(h, sP, 0.38f)
+        val secondary = c(h2, sS, 0.38f)
+        val tertiary = c(th, sT, 0.40f)
         return if (!dark) lightColorScheme(
-            primary = c(h, sP, 0.38f), onPrimary = Color.White,
+            primary = primary, onPrimary = onColor(primary),
             primaryContainer = c(h, 0.75f * k, 0.88f), onPrimaryContainer = c(h, 0.70f * k + 0.1f, 0.14f),
-            secondary = c(h2, sS, 0.38f), onSecondary = Color.White,
+            secondary = secondary, onSecondary = onColor(secondary),
             secondaryContainer = c(h2, 0.40f * k, 0.88f), onSecondaryContainer = c(h2, 0.45f * k + 0.1f, 0.14f),
-            tertiary = c(th, sT, 0.40f), onTertiary = Color.White,
+            tertiary = tertiary, onTertiary = onColor(tertiary),
             tertiaryContainer = c(th, sT + 0.10f, 0.88f), onTertiaryContainer = c(th, sT + 0.15f, 0.14f),
             background = c(h, n, 0.98f), onBackground = c(h, n, 0.10f),
             surface = c(h, n, 0.98f), onSurface = c(h, n, 0.10f),

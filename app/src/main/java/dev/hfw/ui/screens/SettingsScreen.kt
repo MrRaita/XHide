@@ -18,6 +18,11 @@ import dev.hfw.ui.components.SegmentCounter
 import dev.hfw.ui.components.segmentShape
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected as semanticsSelected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -350,14 +355,14 @@ private fun Divider() {}
 
 /** One setting: a box whose corners come from its position in the group. */
 @Composable
-private fun RowCard(onClick: (() -> Unit)? = null, content: @Composable () -> Unit) {
+private fun RowCard(onClick: (() -> Unit)? = null, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     val segments = LocalSegments.current
     val shape = remember(segments) { segments?.let { segmentShape(it.take(), it.count) } ?: RoundedCornerShape(24.dp) }
     val color = MaterialTheme.colorScheme.surfaceContainerHigh
     if (onClick != null) {
-        Surface(onClick = onClick, shape = shape, color = color, modifier = Modifier.fillMaxWidth(), content = content)
+        Surface(onClick = onClick, shape = shape, color = color, modifier = modifier.fillMaxWidth(), content = content)
     } else {
-        Surface(shape = shape, color = color, modifier = Modifier.fillMaxWidth(), content = content)
+        Surface(shape = shape, color = color, modifier = Modifier.fillMaxWidth().clip(shape).then(modifier), content = content)
     }
 }
 
@@ -400,7 +405,9 @@ private fun SwitchRow(
     onChange: (Boolean) -> Unit,
     enabled: Boolean = true,
 ) {
-    RowCard(onClick = if (enabled) { { onChange(!checked) } } else null) {
+    RowCard(
+        modifier = Modifier.toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onChange),
+    ) {
         SettingItem(
             leadingContent = { RowIcon(icon) },
             headlineContent = { Text(title, fontWeight = FontWeight.Medium) },
@@ -409,7 +416,7 @@ private fun SwitchRow(
             } else {
                 null
             },
-            trailingContent = { Switch(checked = checked, onCheckedChange = onChange, enabled = enabled) },
+            trailingContent = { Switch(checked = checked, onCheckedChange = null, enabled = enabled) },
         )
     }
 }
@@ -557,7 +564,18 @@ private fun LanguageRow(vm: HfwViewModel) {
                             Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(12.dp))
-                                .clickable { vm.language = mode; dialog = false }
+                                .clickable {
+                                    vm.language = mode
+                                    if (android.os.Build.VERSION.SDK_INT >= 33) {
+                                        val list = when (mode) {
+                                            LanguageMode.SYSTEM -> android.os.LocaleList.getEmptyLocaleList()
+                                            LanguageMode.TURKISH -> android.os.LocaleList.forLanguageTags("tr")
+                                            LanguageMode.ENGLISH -> android.os.LocaleList.forLanguageTags("en")
+                                        }
+                                        context.getSystemService(android.app.LocaleManager::class.java)?.applicationLocales = list
+                                    }
+                                    dialog = false
+                                }
                                 .padding(vertical = 10.dp, horizontal = 4.dp),
                             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
                         ) {
@@ -634,7 +652,11 @@ private fun Swatch(
             .clip(androidx.compose.foundation.shape.CircleShape)
             .background(color)
             .then(if (selected) Modifier.border(3.dp, MaterialTheme.colorScheme.onSurface, androidx.compose.foundation.shape.CircleShape) else Modifier)
-            .clickable(enabled = enabled, onClickLabel = description, onClick = onClick),
+            .semantics {
+                contentDescription = description
+                semanticsSelected = selected
+            }
+            .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         if (selected && icon == null) Icon(Icons.Rounded.CheckCircle, null, tint = Color.White, modifier = Modifier.size(20.dp))
@@ -655,7 +677,7 @@ private fun CustomColorDialog(initial: Int, onDismiss: () -> Unit, onApply: (Int
     var hue by remember { mutableStateOf(start.hue) }
     var sat by remember { mutableStateOf((start.sat * 0.75f).coerceIn(0f, 1f)) }
     fun current(): Int = Color.hsl(hue, sat, 0.5f).toArgb()
-    var hex by remember { mutableStateOf("%06X".format(current() and 0xFFFFFF)) }
+    var hex by remember { mutableStateOf("%06X".format(initial and 0xFFFFFF)) }
     val valid = parseHex(hex) != null
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
@@ -684,7 +706,7 @@ private fun CustomColorDialog(initial: Int, onDismiss: () -> Unit, onApply: (Int
                 androidx.compose.material3.OutlinedTextField(
                     value = hex,
                     onValueChange = { v ->
-                        hex = v.removePrefix("#").take(6).uppercase()
+                        hex = v.trim().removePrefix("#").uppercase()
                         parseHex(hex)?.let {
                             val p = dev.hfw.ui.theme.Palettes.fromColor(it)
                             hue = p.hue

@@ -455,6 +455,7 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             buildList<Op> {
                 add(Op.Hide(item.userId, item.pkg, null))
+                add(Op.HideScope(item.userId, item.pkg, null))
                 addSingleProfileNameResetOps(item, this)
                 addSingleProfileIconResetOps(item, this)
             }
