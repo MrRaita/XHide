@@ -186,12 +186,20 @@ private fun StatusCard(vm: HfwViewModel, active: Boolean, onShowModule: () -> Un
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     HookStatusBadge(state = state, color = dot, size = 26.dp, active = active)
                     Spacer(Modifier.width(8.dp))
-                    Text(stringResource(title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = fg)
-                    Spacer(Modifier.weight(1f))
+                    Text(
+                        stringResource(title),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = fg,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(8.dp))
                     Text(
                         text = stringResource(R.string.home_model_fmt, Build.MODEL, Build.VERSION.SDK_INT),
                         style = MaterialTheme.typography.labelLarge,
                         color = fg.copy(alpha = 0.82f),
+                        maxLines = 1,
+                        softWrap = false,
                     )
                 }
                 Spacer(Modifier.height(6.dp))
