@@ -209,6 +209,8 @@
     <string name="detail_scope">Gizleme kapsamı</string>
     <string name="scope_custom_sub">Özel kapsam.</string>
     <string name="scope_default_sub">Ayarlar\'daki varsayılan kapsamı izler.</string>
+    <string name="scope_tap_customize">Varsayılan (%1$d/%2$d) · Özelleştirmek için dokun</string>
+    <string name="scope_tap_custom">Özel (%1$d/%2$d) · Düzenlemek için dokun</string>
     <string name="scope_reset">Varsayılanı kullan</string>
     <string name="detail_profiles">Profiller</string>
     <string name="profile_apply_all">İsim ve ikonu tüm profillere uygula</string>

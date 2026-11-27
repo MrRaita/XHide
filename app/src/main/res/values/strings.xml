@@ -209,6 +209,8 @@
     <string name="detail_scope">Hide scope</string>
     <string name="scope_custom_sub">Custom scope.</string>
     <string name="scope_default_sub">Follows the default scope from Settings.</string>
+    <string name="scope_tap_customize">Default (%1$d/%2$d) · Tap to customize</string>
+    <string name="scope_tap_custom">Custom (%1$d/%2$d) · Tap to edit</string>
     <string name="scope_reset">Use the default</string>
     <string name="detail_profiles">Profiles</string>
     <string name="profile_apply_all">Apply name and icon to all profiles</string>

@@ -263,7 +263,7 @@ fun DetailScreen(
 
             if (Caps.hide) {
                 if (vm.advancedMode && !isSelf) {
-                    HideScopeCard(vm, app)
+                    HideScopeCard(vm, app, onToggleHide = requestHide)
                 } else {
                     ActionCard(
                         icon = if (app.hidden) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
@@ -496,7 +496,7 @@ private fun scopeStatus(mask: Int): String {
 
 /** Advanced mode: compact hide card by default; tapping the card expands/collapses the per-place toggles. */
 @Composable
-private fun HideScopeCard(vm: HfwViewModel, app: AppItem) {
+private fun HideScopeCard(vm: HfwViewModel, app: AppItem, onToggleHide: (Boolean) -> Unit) {
     val scheme = MaterialTheme.colorScheme
     val H = dev.hfw.state.HideScope
     val mask = vm.hideScopeOf(app)
@@ -509,12 +509,11 @@ private fun HideScopeCard(vm: HfwViewModel, app: AppItem) {
         title = stringResource(R.string.action_hide),
         subtitle = when {
             !on -> stringResource(R.string.action_hide_off)
-            custom -> stringResource(R.string.scope_custom_sub) + " " + stringResource(R.string.scope_count_fmt, count, 7)
-            count == 7 -> stringResource(R.string.scope_everywhere)
-            else -> stringResource(R.string.scope_count_fmt, count, 7) + " · " + scopeStatus(mask)
+            custom -> stringResource(R.string.scope_tap_custom, count, 7)
+            else -> stringResource(R.string.scope_tap_customize, count, 7)
         },
         onClick = { expanded = !expanded },
-        trailing = { Switch(checked = on, onCheckedChange = { want -> vm.setHidden(app, want) }) },
+        trailing = { Switch(checked = on, onCheckedChange = onToggleHide) },
     )
     androidx.compose.animation.AnimatedVisibility(visible = expanded) {
         Column {
