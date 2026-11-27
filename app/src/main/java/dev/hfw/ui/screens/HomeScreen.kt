@@ -58,8 +58,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.draw.blur
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -161,68 +159,48 @@ private fun StatusCard(vm: HfwViewModel, active: Boolean, onShowModule: () -> Un
         shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(containerColor = bg, contentColor = fg),
     ) {
-        Box {
-            if (Build.VERSION.SDK_INT >= 31) {
-                // Android 12+: the picture is blurred live, only its colours come through.
-                androidx.compose.foundation.Image(
-                    painter = androidx.compose.ui.res.painterResource(R.drawable.status_bg),
-                    contentDescription = null,
-                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                    modifier = Modifier.matchParentSize().graphicsLayer { scaleX = 1.25f; scaleY = 1.25f }
-                        .blur(28.dp, androidx.compose.ui.draw.BlurredEdgeTreatment.Unbounded),
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                HookStatusBadge(state = state, color = dot, size = 26.dp, active = active)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    stringResource(title),
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 15.sp),
+                    fontWeight = FontWeight.Bold,
+                    color = fg,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
                 )
-            } else {
-                // Older Android has no blur: use the same picture, pre-blurred.
-                androidx.compose.foundation.Image(
-                    painter = androidx.compose.ui.res.painterResource(R.drawable.status_bg_blur),
-                    contentDescription = null,
-                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                    modifier = Modifier.matchParentSize(),
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = stringResource(R.string.home_model_fmt, Build.MODEL, Build.VERSION.SDK_INT),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = fg.copy(alpha = 0.82f),
+                    maxLines = 1,
+                    softWrap = false,
                 )
             }
-            // State tint over the picture: green-ish when working, red when there is a problem, neutral while checking.
-            Box(Modifier.matchParentSize().background(bg.copy(alpha = 0.62f)))
-            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 18.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    HookStatusBadge(state = state, color = dot, size = 26.dp, active = active)
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        stringResource(title),
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = fg,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = stringResource(R.string.home_model_fmt, Build.MODEL, Build.VERSION.SDK_INT),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = fg.copy(alpha = 0.82f),
-                        maxLines = 1,
-                        softWrap = false,
-                    )
-                }
-                Spacer(Modifier.height(6.dp))
-                Text(stringResource(sub), style = MaterialTheme.typography.bodyMedium, color = fg.copy(alpha = 0.9f))
-                AnimatedVisibility(visible = state == null) {
-                    LinearWavyProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
-                }
-                if (Caps.icon && vm.moduleState == dev.hfw.data.ModuleState.MISSING && online) {
-                    Spacer(Modifier.height(8.dp))
-                    FilledTonalButton(
-                        onClick = onShowModule,
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-                    ) { Text(stringResource(R.string.home_install_module), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold) }
-                }
-                if (vm.pending > 0) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = "${stringResource(R.string.status_pending)}: ${vm.pending}",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = fg,
-                    )
-                }
+            Spacer(Modifier.height(6.dp))
+            Text(stringResource(sub), style = MaterialTheme.typography.bodyMedium, color = fg.copy(alpha = 0.9f))
+            AnimatedVisibility(visible = state == null) {
+                LinearWavyProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
+            }
+            if (Caps.icon && vm.moduleState == dev.hfw.data.ModuleState.MISSING && online) {
+                Spacer(Modifier.height(8.dp))
+                FilledTonalButton(
+                    onClick = onShowModule,
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                ) { Text(stringResource(R.string.home_install_module), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold) }
+            }
+            if (vm.pending > 0) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "${stringResource(R.string.status_pending)}: ${vm.pending}",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = fg,
+                )
             }
         }
     }
