@@ -172,11 +172,12 @@ fun AppsToolbar(vm: HfwViewModel, onSystemWarning: () -> Unit, modifier: Modifie
                     highlighted = vm.sort != AppSort.CHANGED_FIRST || vm.showSystemApps,
                     onSelect = { vm.sort = it },
                     footer = { close ->
-                        HorizontalDivider(Modifier.padding(vertical = 6.dp, horizontal = 8.dp))
+                        HorizontalDivider(Modifier.padding(vertical = 4.dp, horizontal = 8.dp))
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(20.dp))
+                                .padding(horizontal = 6.dp)
+                                .clip(RoundedCornerShape(12.dp))
                                 .clickable {
                                     if (vm.showSystemApps) {
                                         vm.showSystemApps = false
@@ -187,14 +188,14 @@ fun AppsToolbar(vm: HfwViewModel, onSystemWarning: () -> Unit, modifier: Modifie
                                         onSystemWarning()
                                     }
                                 }
-                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(stringResource(R.string.show_system_apps), style = MaterialTheme.typography.bodyLarge)
+                            Column(Modifier.weight(1f).padding(end = 8.dp)) {
+                                Text(stringResource(R.string.show_system_apps), style = MaterialTheme.typography.bodyMedium)
                                 Text(
                                     stringResource(R.string.show_system_apps_sub),
-                                    style = MaterialTheme.typography.bodySmall,
+                                    style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }

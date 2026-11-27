@@ -1,31 +1,25 @@
 package dev.hfw.ui.components
 
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Sort
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,22 +27,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Dp
-import androidx.compose.foundation.layout.width
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
 
 /**
- * Filter/sort button that expands in place into a rounded panel holding the
- * options (selected one in a soft pill). The panel grows out of the button's
- * top-right corner with a spring.
+ * Compact Material 3 sort/filter menu anchored below the sort button so the button
+ * itself stays uncovered and tapping it or outside dismisses the menu.
  */
 @Composable
 fun <T> SortMenuButton(
@@ -60,26 +48,10 @@ fun <T> SortMenuButton(
     modifier: Modifier = Modifier,
     buttonSize: Dp = 52.dp,
     buttonCorner: Dp = 16.dp,
-    /** Extra content under the options (e.g. a switch). Gets a function that closes the panel. */
+    /** Extra content under the options (e.g. a switch). Gets a function that closes the menu. */
     footer: (@Composable ColumnScope.(close: () -> Unit) -> Unit)? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    var popupVisible by remember { mutableStateOf(false) }
-    val progress = remember { Animatable(0f) }
-    val reduce = LocalReduceMotion.current
-
-    // Plain eased expand/collapse: no spring, so the panel never overshoots.
-    LaunchedEffect(expanded) {
-        if (expanded) {
-            popupVisible = true
-            if (reduce) progress.snapTo(1f)
-            else progress.animateTo(1f, tween(260, easing = androidx.compose.animation.core.FastOutSlowInEasing))
-        } else if (popupVisible) {
-            if (reduce) progress.snapTo(0f)
-            else progress.animateTo(0f, tween(200, easing = androidx.compose.animation.core.FastOutSlowInEasing))
-            popupVisible = false
-        }
-    }
 
     val tint = if (highlighted) MaterialTheme.colorScheme.primary
     else MaterialTheme.colorScheme.onSurfaceVariant
@@ -89,120 +61,64 @@ fun <T> SortMenuButton(
             modifier = Modifier.size(buttonSize),
             shape = RoundedCornerShape(buttonCorner),
             tonalElevation = 2.dp,
-            onClick = { expanded = true }
+            onClick = { expanded = !expanded },
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Rounded.Sort,
                     contentDescription = title,
                     tint = tint,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(20.dp),
                 )
             }
         }
 
-        if (popupVisible) {
-            Popup(
-                alignment = Alignment.TopEnd,
-                offset = IntOffset.Zero,
-                onDismissRequest = { expanded = false },
-                properties = PopupProperties(focusable = true)
-            ) {
-                val screenW = LocalConfiguration.current.screenWidthDp
-                val panelWidth: Dp = minOf(268, screenW - 32).dp
-                // Corner radius grows from the button's corner to 28dp as the panel opens.
-                val corner = (buttonCorner.value + (28f - buttonCorner.value) * progress.value.coerceIn(0f, 1f)).dp
-                Surface(
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            offset = DpOffset(0.dp, 6.dp),
+            shape = RoundedCornerShape(18.dp),
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.width(228.dp),
+        ) {
+            options.forEach { (value, label) ->
+                val isSelected = value == selected
+                Row(
                     modifier = Modifier
-                        .width(panelWidth)
-                        .graphicsLayer {
-                            val p = progress.value
-                            // Top-right corner stays pinned on the button's top-right corner.
-                            transformOrigin = TransformOrigin(1f, 0f)
-                            val sx0 = buttonSize.value / panelWidth.value
-                            scaleX = sx0 + (1f - sx0) * p
-                            scaleY = 0.14f + 0.86f * p
-                            alpha = (p * 6f).coerceIn(0f, 1f)
-                        },
-                    shape = RoundedCornerShape(corner),
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    shadowElevation = 8.dp
+                        .fillMaxWidth()
+                        .padding(horizontal = 6.dp, vertical = 1.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (isSelected) MaterialTheme.colorScheme.surfaceContainerHighest
+                            else Color.Transparent
+                        )
+                        .clickable {
+                            onSelect(value)
+                            expanded = false
+                        }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Column {
-                        // Header is exactly button-sized at the top-right so the icon sits where the button's was.
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(buttonSize)
-                                .padding(start = 20.dp, end = ((buttonSize.value - 20f) / 2f).dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = title,
-                                fontSize = 13.5.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Rounded.Sort,
-                                contentDescription = null,
-                                tint = tint,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                        val screenH = LocalConfiguration.current.screenHeightDp
-                        Column(
-                            modifier = Modifier
-                                .heightIn(max = (screenH - 160).coerceAtLeast(120).dp)
-                                .verticalScroll(rememberScrollState())
-                                .padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
-                        ) {
-                        options.forEachIndexed { index, (value, label) ->
-                            val isSelected = value == selected
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .graphicsLayer {
-                                        // Content just fades in slightly behind the growing panel.
-                                        alpha = ((progress.value - 0.35f) / 0.5f).coerceIn(0f, 1f)
-                                    }
-                                    .clip(RoundedCornerShape(20.dp))
-                                    .background(
-                                        if (isSelected) MaterialTheme.colorScheme.surfaceContainerHighest
-                                        else androidx.compose.ui.graphics.Color.Transparent
-                                    )
-                                    .clickable {
-                                        onSelect(value)
-                                        expanded = false
-                                    }
-                                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Text(
-                                    text = label,
-                                    fontSize = 14.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                if (isSelected) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Check,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                        }
-                        footer?.invoke(this) { expanded = false }
-                        }
+                    Text(
+                        text = label,
+                        fontSize = 13.5.sp,
+                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (isSelected) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (isSelected) {
+                        Icon(
+                            imageVector = Icons.Rounded.Check,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp),
+                        )
                     }
                 }
             }
+            footer?.invoke(this) { expanded = false }
         }
     }
 }
