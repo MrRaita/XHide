@@ -145,7 +145,8 @@ fun DetailScreen(
     val ct = statusPx + with(density) { 28.dp.toPx() }
     val travel = (c0 - ct).coerceAtLeast(1f)
     val collapseP: () -> Float = { (scroll.value / travel).coerceIn(0f, 1f) }
-    androidx.compose.foundation.layout.BoxWithConstraints(modifier.background(scheme.background)) {
+    Surface(modifier = modifier, color = scheme.background, contentColor = scheme.onBackground) {
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
         val widthPx = with(density) { maxWidth.toPx() }
         val cxt = with(density) { 76.dp.toPx() }
         val flightReg = dev.hfw.ui.components.LocalIconFlight.current
@@ -305,12 +306,13 @@ fun DetailScreen(
         ) {
             Box(Modifier.fillMaxSize().padding(top = with(density) { statusPx.toDp() })) {
                 IconButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart).padding(start = 4.dp)) {
-                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = stringResource(R.string.back))
+                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = stringResource(R.string.back), tint = scheme.onSurface)
                 }
                 Text(
                     text = app.displayLabel,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
+                    color = scheme.onSurface,
                     maxLines = 1,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                     modifier = Modifier
@@ -338,6 +340,7 @@ fun DetailScreen(
         ) {
             AppIcon(app, 120.dp, track = IconTrack.DETAIL, dimmed = app.hidden)
         }
+    }
     }
 
     if (confirmReset) {
