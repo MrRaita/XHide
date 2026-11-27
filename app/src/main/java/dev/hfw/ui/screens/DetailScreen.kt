@@ -235,7 +235,11 @@ fun DetailScreen(
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                             )
                             Spacer(Modifier.height(10.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                            androidx.compose.foundation.layout.FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
                                 Pill(stringResource(profileLabel(app.profile)))
                                 if (app.isSystem) Pill(stringResource(R.string.pill_system))
                                 if (app.isModule) Pill(stringResource(R.string.pill_module))
