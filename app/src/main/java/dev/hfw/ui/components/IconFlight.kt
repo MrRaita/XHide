@@ -25,6 +25,7 @@ class IconFlight {
 
     private val rows = HashMap<String, Entry>()
     var detailRect by mutableStateOf<Rect?>(null)
+    var detailKey by mutableStateOf<String?>(null)
     var flying by mutableStateOf<String?>(null)
 
     fun rowRect(key: String): Rect? = rows[key]?.rect

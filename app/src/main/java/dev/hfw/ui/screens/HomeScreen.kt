@@ -369,7 +369,11 @@ private fun RecentCard(vm: HfwViewModel, onOpenApp: (String) -> Unit, modifier: 
                 Text(stringResource(R.string.home_recent_empty), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
             } else {
                 entries.forEach { e ->
-                    val app = vm.apps.firstOrNull { it.pkg == e.pkg }
+                    val app = if (e.key.isNotEmpty()) {
+                        vm.find(e.key)
+                    } else {
+                        vm.apps.filter { it.pkg == e.pkg }.singleOrNull()
+                    }
                     val text = stringResource(
                         when (e.kind) {
                             ActivityKind.HIDDEN -> R.string.activity_hidden

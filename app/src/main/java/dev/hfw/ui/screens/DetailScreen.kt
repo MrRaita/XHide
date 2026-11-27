@@ -133,8 +133,15 @@ fun DetailScreen(
     val requestHide: (Boolean) -> Unit = { hide ->
         if (hide && isSelf && !vm.hideSelfWarning) pendingRisky = 3 else vm.setHidden(app, hide)
     }
+    var pendingIconKey by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingIconAll by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) vm.setIconFromUri(app, uri, applyAll)
+        val key = pendingIconKey
+        val all = pendingIconAll
+        pendingIconKey = null
+        if (uri != null && key != null) {
+            vm.find(key)?.let { vm.setIconFromUri(it, uri, all) }
+        }
     }
 
     val density = androidx.compose.ui.platform.LocalDensity.current
@@ -194,6 +201,7 @@ fun DetailScreen(
                                 .onGloballyPositioned { coords ->
                                     if (flightReg.flying == null || scroll.value == 0) {
                                         flightReg.detailRect = coords.boundsInRoot()
+                                        flightReg.detailKey = app.key
                                     }
                                 },
                         ) {
@@ -313,7 +321,7 @@ fun DetailScreen(
                 },
             )
 
-            if (app.modified) {
+            if (app.modified || (Caps.hide && vm.hasCustomHideScope(app))) {
                 Spacer(Modifier.height(12.dp))
                 ActionCard(
                     icon = Icons.Rounded.RestartAlt,
@@ -396,7 +404,12 @@ fun DetailScreen(
     if (showIcons) {
         IconPickerSheet(
             app = app,
-            onGallery = { picker.launch("image/*"); showIcons = false },
+            onGallery = {
+                pendingIconKey = app.key
+                pendingIconAll = applyAll
+                picker.launch("image/*")
+                showIcons = false
+            },
             onReset = { vm.resetIcon(app, applyAll) },
             onDismiss = { showIcons = false },
         )

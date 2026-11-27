@@ -8,6 +8,7 @@ import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import dev.hfw.data.AppSort
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.selected as semanticsSelected
 import androidx.compose.ui.semantics.semantics
@@ -178,16 +179,20 @@ fun AppsToolbar(vm: HfwViewModel, onSystemWarning: () -> Unit, modifier: Modifie
                                 .fillMaxWidth()
                                 .padding(horizontal = 6.dp)
                                 .clip(RoundedCornerShape(12.dp))
-                                .clickable {
-                                    if (vm.showSystemApps) {
-                                        vm.showSystemApps = false
-                                    } else if (vm.systemWarningAccepted) {
-                                        vm.showSystemApps = true
-                                    } else {
-                                        close()
-                                        onSystemWarning()
-                                    }
-                                }
+                                .toggleable(
+                                    value = vm.showSystemApps,
+                                    role = androidx.compose.ui.semantics.Role.Switch,
+                                    onValueChange = {
+                                        if (vm.showSystemApps) {
+                                            vm.showSystemApps = false
+                                        } else if (vm.systemWarningAccepted) {
+                                            vm.showSystemApps = true
+                                        } else {
+                                            close()
+                                            onSystemWarning()
+                                        }
+                                    },
+                                )
                                 .padding(horizontal = 10.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {

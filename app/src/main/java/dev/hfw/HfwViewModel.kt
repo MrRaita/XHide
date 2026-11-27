@@ -289,18 +289,25 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
         val auto = StateData(autoHide = s.autoHide, autoHideClone = s.autoHideClone)
         val ops = ArrayList<Op>()
         val touched = ArrayList<Pair<ActivityKind, AppItem>>()
+        val resetNamePkgs = HashSet<String>()
+        val resetIconPkgs = HashSet<String>()
+        val usersByPkg = items.groupBy { it.pkg }.mapValues { (_, list) -> list.map { it.userId }.toSet() }
         for (it in items) {
             val before = ops.size
             when (action) {
                 BulkAction.RESET_ALL -> {
                     if (Caps.hide) { ops += Op.Hide(it.userId, it.pkg, null); ops += Op.HideScope(it.userId, it.pkg, null) }
                     if (!it.lookProtected) {
-                        if (it.renamed) addSingleProfileNameResetOps(it, ops)
-                        if (Caps.icon && it.iconChanged) addSingleProfileIconResetOps(it, ops)
+                        if (it.renamed && resetNamePkgs.add(it.pkg)) addNameResetOps(it.pkg, usersByPkg[it.pkg].orEmpty(), ops)
+                        if (Caps.icon && it.iconChanged && resetIconPkgs.add(it.pkg)) addIconResetOps(it.pkg, usersByPkg[it.pkg].orEmpty(), ops)
                     }
                 }
-                BulkAction.RESET_NAME -> if (!it.lookProtected && it.renamed) addSingleProfileNameResetOps(it, ops)
-                BulkAction.RESET_ICON -> if (Caps.icon && !it.lookProtected && it.iconChanged) addSingleProfileIconResetOps(it, ops)
+                BulkAction.RESET_NAME -> if (!it.lookProtected && it.renamed && resetNamePkgs.add(it.pkg)) {
+                    addNameResetOps(it.pkg, usersByPkg[it.pkg].orEmpty(), ops)
+                }
+                BulkAction.RESET_ICON -> if (Caps.icon && !it.lookProtected && it.iconChanged && resetIconPkgs.add(it.pkg)) {
+                    addIconResetOps(it.pkg, usersByPkg[it.pkg].orEmpty(), ops)
+                }
                 BulkAction.HIDE, BulkAction.SHOW -> if (Caps.hide && it.pkg != Identity.PACKAGE) {
                     val hide = action == BulkAction.HIDE
                     ops += Op.Hide(it.userId, it.pkg, if (hide == auto.shouldHide(it.pkg, it.userId, it.isModule)) null else hide)
@@ -340,7 +347,7 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
     fun clearFilters() { filters = emptySet(); profileFilters = emptySet() }
 
     private fun log(kind: ActivityKind, item: AppItem) {
-        activity = (listOf(ActivityEntry(kind, item.pkg, item.displayLabel, System.currentTimeMillis())) + activity).take(20)
+        activity = (listOf(ActivityEntry(kind, item.pkg, item.displayLabel, System.currentTimeMillis(), item.key)) + activity).take(20)
         prefs.saveActivity(activity)
     }
 
@@ -377,23 +384,23 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
         setHideScope(item, current xor flag)
     }
 
-    private fun addSingleProfileNameResetOps(item: AppItem, ops: MutableList<Op>) {
+    private fun addNameResetOps(pkg: String, targetUsers: Set<Int>, ops: MutableList<Op>) {
         val s = store.state
-        ops.add(Op.Name(item.pkg, null, item.userId))
-        val legacyLabel = s.apps[item.pkg]?.label ?: return
-        for (otherUser in entries.asSequence().filter { it.pkg == item.pkg && it.userId != item.userId }.map { it.userId }.distinct()) {
-            if (s.labels[otherUser]?.containsKey(item.pkg) != true) {
-                ops.add(Op.Name(item.pkg, legacyLabel, otherUser))
+        for (uid in targetUsers) ops.add(Op.Name(pkg, null, uid))
+        val legacyLabel = s.apps[pkg]?.label ?: return
+        for (otherUser in entries.asSequence().filter { it.pkg == pkg && it.userId !in targetUsers }.map { it.userId }.distinct()) {
+            if (s.labels[otherUser]?.containsKey(pkg) != true) {
+                ops.add(Op.Name(pkg, legacyLabel, otherUser))
             }
         }
-        ops.add(Op.Name(item.pkg, null, null))
+        ops.add(Op.Name(pkg, null, null))
     }
 
-    private fun addSingleProfileIconResetOps(item: AppItem, ops: MutableList<Op>) {
-        ops.add(Op.Icon(item.pkg, 0L, item.userId))
-        val hasLegacyIcon = (store.state.apps[item.pkg]?.iconRev ?: 0L) > 0L
-        val existsInOtherProfile = entries.any { it.pkg == item.pkg && it.userId != item.userId }
-        if (hasLegacyIcon && !existsInOtherProfile) ops.add(Op.Icon(item.pkg, 0L, null))
+    private fun addIconResetOps(pkg: String, targetUsers: Set<Int>, ops: MutableList<Op>) {
+        for (uid in targetUsers) ops.add(Op.Icon(pkg, 0L, uid))
+        val hasLegacyIcon = (store.state.apps[pkg]?.iconRev ?: 0L) > 0L
+        val existsInOtherProfile = entries.any { it.pkg == pkg && it.userId !in targetUsers }
+        if (hasLegacyIcon && !existsInOtherProfile) ops.add(Op.Icon(pkg, 0L, null))
     }
 
     private fun targets(item: AppItem, allProfiles: Boolean): List<AppItem> = if (allProfiles) siblings(item) else listOf(item)
@@ -401,8 +408,11 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
     fun setCustomLabel(item: AppItem, label: String?, allProfiles: Boolean = false) {
         val clean = label?.trim()?.takeIf { it.isNotEmpty() }
         val ops = ArrayList<Op>(4)
-        for (t in targets(item, allProfiles)) {
-            if (clean == null) addSingleProfileNameResetOps(t, ops) else ops.add(Op.Name(t.pkg, clean, t.userId))
+        val list = targets(item, allProfiles)
+        if (clean == null) {
+            addNameResetOps(item.pkg, list.map { it.userId }.toSet(), ops)
+        } else {
+            for (t in list) ops.add(Op.Name(t.pkg, clean, t.userId))
         }
         if (apply(ops.distinct())) log(if (clean == null) ActivityKind.RESET else ActivityKind.RENAMED, item)
     }
@@ -428,7 +438,7 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
 
     fun resetIcon(item: AppItem, allProfiles: Boolean = false) {
         val ops = ArrayList<Op>(2)
-        for (t in targets(item, allProfiles)) addSingleProfileIconResetOps(t, ops)
+        addIconResetOps(item.pkg, targets(item, allProfiles).map { it.userId }.toSet(), ops)
         if (apply(ops.distinct())) log(ActivityKind.RESET, item)
     }
 
@@ -442,8 +452,8 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
             if (s.apps[item.pkg]?.label != null) ops.add(Op.Name(item.pkg, null, null))
             if ((s.apps[item.pkg]?.iconRev ?: 0L) > 0L) ops.add(Op.Icon(item.pkg, 0L, null))
         } else {
-            addSingleProfileNameResetOps(item, ops)
-            addSingleProfileIconResetOps(item, ops)
+            addNameResetOps(item.pkg, setOf(item.userId), ops)
+            addIconResetOps(item.pkg, setOf(item.userId), ops)
         }
         if (ops.isNotEmpty() && apply(ops)) log(ActivityKind.RESET, item)
     }
@@ -456,8 +466,8 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
             buildList<Op> {
                 add(Op.Hide(item.userId, item.pkg, null))
                 add(Op.HideScope(item.userId, item.pkg, null))
-                addSingleProfileNameResetOps(item, this)
-                addSingleProfileIconResetOps(item, this)
+                addNameResetOps(item.pkg, setOf(item.userId), this)
+                addIconResetOps(item.pkg, setOf(item.userId), this)
             }
         }
         if (apply(ops)) log(ActivityKind.RESET, item)

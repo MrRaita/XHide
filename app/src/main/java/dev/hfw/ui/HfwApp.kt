@@ -32,9 +32,11 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
@@ -142,7 +144,9 @@ fun HfwApp(vm: HfwViewModel) {
         try {
             progress.collect { event ->
                 backDir = if (event.swipeEdge == BackEventCompat.EDGE_RIGHT) -1f else 1f
-                if (flightEnabled && iconFlight.flying == null && iconFlight.rowRect(detailKey ?: "") != null) iconFlight.flying = detailKey
+                if (flightEnabled && iconFlight.flying == null &&
+                    iconFlight.rowRect(detailKey ?: "") != null && iconFlight.detailKey == detailKey
+                ) iconFlight.flying = detailKey
                 backAnim.snapTo(event.progress)
                 if (iconFlight.flying != null) flight.snapTo(event.progress)
             }
@@ -169,15 +173,15 @@ fun HfwApp(vm: HfwViewModel) {
                 iconFlight.flying = key
                 flight.snapTo(1f)
                 var frames = 0
-                while (iconFlight.detailRect == null && frames < 3) { withFrameNanos { }; frames++ }
-                if (iconFlight.detailRect != null) flight.animateTo(0f, tween(320, easing = FastOutSlowInEasing))
+                while ((iconFlight.detailRect == null || iconFlight.detailKey != key) && frames < 3) { withFrameNanos { }; frames++ }
+                if (iconFlight.detailRect != null && iconFlight.detailKey == key) flight.animateTo(0f, tween(320, easing = FastOutSlowInEasing))
                 iconFlight.flying = null
             }
         } else if (shownKey != null) {
             // closing: finish the flight to the row (a gesture may already have moved it part of the way)
             val closing = shownKey
             if (iconFlight.flying == null && flightEnabled && closing != null &&
-                iconFlight.rowRect(closing) != null && iconFlight.detailRect != null
+                iconFlight.rowRect(closing) != null && iconFlight.detailRect != null && iconFlight.detailKey == closing
             ) {
                 flight.snapTo(0f)
                 iconFlight.flying = closing
@@ -200,19 +204,23 @@ fun HfwApp(vm: HfwViewModel) {
     }
     val saveModule = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        val ok = try {
-            context.assets.open("hfw_sepolicy.zip").use { input ->
-                context.contentResolver.openOutputStream(uri)?.use { out -> input.copyTo(out) } != null
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                try {
+                    context.assets.open("hfw_sepolicy.zip").use { input ->
+                        context.contentResolver.openOutputStream(uri)?.use { out -> input.copyTo(out) } != null
+                    }
+                } catch (_: Throwable) {
+                    false
+                }
             }
-        } catch (_: Throwable) {
-            false
-        }
-        notify(if (ok) savedMessage else saveFailed)
-        if (ok) {
-            // open the root manager if one is installed, so the user can pick "install from storage"
-            val managers = listOf("me.weishu.kernelsu", "com.rifsxd.ksunext", "com.topjohnwu.magisk", "me.bmax.apatch")
-            managers.firstNotNullOfOrNull { context.packageManager.getLaunchIntentForPackage(it) }?.let {
-                try { context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Throwable) {}
+            notify(if (ok) savedMessage else saveFailed)
+            if (ok) {
+                // open the root manager if one is installed, so the user can pick "install from storage"
+                val managers = listOf("me.weishu.kernelsu", "com.rifsxd.ksunext", "com.topjohnwu.magisk", "me.bmax.apatch")
+                managers.firstNotNullOfOrNull { context.packageManager.getLaunchIntentForPackage(it) }?.let {
+                    try { context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Throwable) {}
+                }
             }
         }
     }
@@ -487,6 +495,7 @@ private fun MainShell(
                     MainTab.HOME -> HomeScreen(
                         vm, homeState, onShowModule,
                         onOpenAppsFilter = { f ->
+                            vm.query = ""
                             vm.clearFilters()
                             if (f != null) vm.toggleFilter(f)
                             onTab(MainTab.APPS)
@@ -593,8 +602,10 @@ private fun openModuleWithManager(context: Context): Boolean {
         } catch (_: Throwable) {
         }
     }
+    val fallbackIntent = view()
+    if (context.packageManager.queryIntentActivities(fallbackIntent, 0).isEmpty()) return false
     return try {
-        context.startActivity(Intent.createChooser(view(), null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        context.startActivity(Intent.createChooser(fallbackIntent, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         true
     } catch (_: Throwable) {
         false

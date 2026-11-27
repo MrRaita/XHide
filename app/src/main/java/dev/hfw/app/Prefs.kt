@@ -80,7 +80,7 @@ class Prefs(ctx: Context) {
         (0 until a.length()).mapNotNull {
             val o = a.getJSONObject(it)
             val kind = ActivityKind.entries.getOrNull(o.getInt("k")) ?: return@mapNotNull null
-            ActivityEntry(kind, o.getString("p"), o.optString("l"), o.getLong("t"))
+            ActivityEntry(kind, o.getString("p"), o.optString("l"), o.getLong("t"), o.optString("key"))
         }
     } catch (_: Throwable) {
         emptyList()
@@ -88,7 +88,11 @@ class Prefs(ctx: Context) {
 
     fun saveActivity(list: List<ActivityEntry>) {
         val a = JSONArray()
-        list.take(20).forEach { a.put(JSONObject().put("k", it.kind.ordinal).put("p", it.pkg).put("l", it.label).put("t", it.at)) }
+        list.take(20).forEach {
+            val obj = JSONObject().put("k", it.kind.ordinal).put("p", it.pkg).put("l", it.label).put("t", it.at)
+            if (it.key.isNotEmpty()) obj.put("key", it.key)
+            a.put(obj)
+        }
         sp.edit().putString("activity", a.toString()).apply()
     }
 

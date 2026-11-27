@@ -63,7 +63,8 @@ fun rememberBlurredAppIcon(app: AppItem): ImageBitmap? {
             s2.recycle()
             s3.asImageBitmap()
         }
-        if (fresh != null) { IconCache.blurCache.put(key, fresh); bmp = fresh }
+        if (fresh != null) IconCache.blurCache.put(key, fresh)
+        bmp = fresh
     }
     return bmp
 }

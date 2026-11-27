@@ -55,6 +55,7 @@ data class ActivityEntry(
     val pkg: String,
     val label: String,
     val at: Long,
+    val key: String = "",
 )
 
 /** What the running Android version can do: name 8+, hiding 11+, icons 14+. Unsupported features are hidden from the UI. */

@@ -63,9 +63,20 @@ object Palettes {
     private fun onColor(bg: Color): Color =
         if (bg.luminance() > 0.179f) Color.Black else Color.White
 
+    private fun readableOnLight(h: Float, s: Float, startL: Float, bg: Color): Color {
+        val bgLum = bg.luminance() + 0.05f
+        var l = startL
+        while (l > 0.05f) {
+            val fg = c(h, s, l)
+            if (bgLum / (fg.luminance() + 0.05f) >= 4.5f) return fg
+            l -= 0.02f
+        }
+        return c(h, s, 0.05f)
+    }
+
     /** Sample color shown in the picker */
     fun swatch(p: Palette): Color =
-        if (p.tertiaryHue != null) c(p.tertiaryHue, 0.85f, 0.50f) else c(p.hue, 0.30f + 0.35f * p.sat, 0.45f)
+        if (p.tertiaryHue != null) c(p.tertiaryHue, 0.85f, 0.50f) else c(p.hue, 0.65f * p.sat, 0.45f)
 
     fun scheme(p: Palette, dark: Boolean): ColorScheme {
         val h = p.hue
@@ -76,7 +87,8 @@ object Palettes {
         val sS = 0.30f * k
         val sT = if (p.tertiaryHue != null) 0.80f else 0.40f * k
         val n = 0.04f + 0.06f * k // slight tint of the neutral surfaces
-        val primary = c(h, sP, 0.38f)
+        val lightSurfaceHigh = c(h, n + 0.03f, 0.92f)
+        val primary = readableOnLight(h, sP, 0.38f, lightSurfaceHigh)
         val secondary = c(h2, sS, 0.38f)
         val tertiary = c(th, sT, 0.40f)
         return if (!dark) lightColorScheme(
