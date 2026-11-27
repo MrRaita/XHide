@@ -60,7 +60,7 @@ fun <T> SortMenuButton(
         Surface(
             modifier = Modifier.size(buttonSize),
             shape = RoundedCornerShape(buttonCorner),
-            tonalElevation = 2.dp,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
             onClick = { expanded = !expanded },
         ) {
             Box(contentAlignment = Alignment.Center) {
