@@ -141,7 +141,7 @@ fun DetailScreen(
     val scroll = rememberScrollState()
     val statusPx = WindowInsets.statusBars.getTop(density)
     val barDp = with(density) { statusPx.toDp() } + 56.dp
-    val travel = with(density) { 84.dp.toPx() }.coerceAtLeast(1f)
+    val travel = with(density) { 112.dp.toPx() }.coerceAtLeast(1f)
     val collapseP: () -> Float = { (scroll.value / travel).coerceIn(0f, 1f) }
     val flightReg = dev.hfw.ui.components.LocalIconFlight.current
     val blurredIcon = dev.hfw.ui.components.rememberBlurredAppIcon(app)
@@ -182,7 +182,10 @@ fun DetailScreen(
                             )
                         }
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(18.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(18.dp)
+                                .graphicsLayer { alpha = (1f - collapseP() * 1.4f).coerceIn(0f, 1f) },
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                         Box(
@@ -328,56 +331,40 @@ fun DetailScreen(
             Spacer(Modifier.height(32.dp))
         }
 
-        // Top bar: opaque strip over the scrolling content, fading into the hero card's blurred tint when scrolled.
+        // Top bar: opaque strip over the scrolling content, smoothly revealing the small icon and app name on scroll.
         Box(
             Modifier.fillMaxWidth().height(barDp)
                 .clip(RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp))
                 .drawBehind {
-                    drawRect(androidx.compose.ui.graphics.lerp(scheme.background, scheme.surfaceContainerLow, collapseP()))
+                    drawRect(androidx.compose.ui.graphics.lerp(scheme.background, scheme.surfaceContainer, collapseP()))
                 },
         ) {
-            if (blurredIcon != null) {
-                Box(
-                    Modifier
-                        .matchParentSize()
-                        .graphicsLayer { alpha = collapseP() },
-                ) {
-                    androidx.compose.foundation.Image(
-                        bitmap = blurredIcon,
-                        contentDescription = null,
-                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                        modifier = Modifier.matchParentSize(),
-                    )
-                    Box(
-                        Modifier
-                            .matchParentSize()
-                            .background(
-                                androidx.compose.ui.graphics.Brush.horizontalGradient(
-                                    colors = listOf(
-                                        scheme.surfaceContainerLow.copy(alpha = 0.62f),
-                                        scheme.surfaceContainerLow.copy(alpha = 0.86f),
-                                    ),
-                                ),
-                            ),
-                    )
-                }
-            }
             Box(Modifier.fillMaxSize().padding(top = with(density) { statusPx.toDp() })) {
                 IconButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart).padding(start = 4.dp)) {
                     Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = stringResource(R.string.back), tint = scheme.onSurface)
                 }
-                Text(
-                    text = app.displayLabel,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = scheme.onSurface,
-                    maxLines = 1,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .align(Alignment.CenterStart)
-                        .padding(start = 56.dp, end = 16.dp)
-                        .graphicsLayer { alpha = ((collapseP() - 0.35f) * 2f).coerceIn(0f, 1f) },
-                )
+                        .padding(start = 52.dp, end = 16.dp)
+                        .graphicsLayer {
+                            val t = ((collapseP() - 0.3f) / 0.7f).coerceIn(0f, 1f)
+                            alpha = t
+                            translationY = (1f - t) * with(density) { 10.dp.toPx() }
+                        },
+                ) {
+                    AppIcon(app, 28.dp, dimmed = app.hidden)
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = app.displayLabel,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = scheme.onSurface,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }
