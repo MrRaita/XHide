@@ -15,7 +15,7 @@ reviews:
     - "!**/*.apk"
     - "!gradle/wrapper/**"
   path_instructions:
-    - path: "app/src/main/java/dev/hfw/core/**"
+    - path: "app/src/main/java/dev/fadalias/core/**"
       instructions: |
         This code runs inside system_server via Xposed hooks on Binder threads.
         - Any uncaught exception or long blocking call can freeze or crash the whole OS; hooks must fail safe and fall back to original behavior.
@@ -23,21 +23,21 @@ reviews:
         - Calls made with Binder.clearCallingIdentity must restore identity in a finally block.
         - Self-caller checks (isCallerSelf) gate IPC and cross-profile privileges; flag anything that could let another app pass them.
         - Reflection targets differ across Android 11-17 and OEM ROMs; prefer graceful fallbacks over assumptions.
-    - path: "app/src/main/java/dev/hfw/data/**"
+    - path: "app/src/main/java/dev/fadalias/data/**"
       instructions: |
         Shared state read by system_server Binder threads (state/** and data/**).
         - Preserve the pattern of publishing immutable snapshots through a single @Volatile reference; flag partial or multi-field updates.
         - IPC payloads must never exceed MAX_IPC_PAYLOAD_CHARS (96 * 1024).
         - Persisted files under /data/system must be written via DurableFiles (fsync + atomic rename).
-        - Changing HFW's own name, icon or visibility must never touch its data; rules are keyed by package name only.
-    - path: "app/src/main/java/dev/hfw/state/**"
+        - Changing Fadalias's own name, icon or visibility must never touch its data; rules are keyed by package name only.
+    - path: "app/src/main/java/dev/fadalias/state/**"
       instructions: |
         Shared state read by system_server Binder threads (state/** and data/**).
         - Preserve the pattern of publishing immutable snapshots through a single @Volatile reference; flag partial or multi-field updates.
         - IPC payloads must never exceed MAX_IPC_PAYLOAD_CHARS (96 * 1024).
         - Persisted files under /data/system must be written via DurableFiles (fsync + atomic rename).
-        - Changing HFW's own name, icon or visibility must never touch its data; rules are keyed by package name only.
-    - path: "app/src/main/java/dev/hfw/ui/**"
+        - Changing Fadalias's own name, icon or visibility must never touch its data; rules are keyed by package name only.
+    - path: "app/src/main/java/dev/fadalias/ui/**"
       instructions: |
         Jetpack Compose companion app.
         - Flag work on the main thread (PackageManager queries, file I/O, IPC).
