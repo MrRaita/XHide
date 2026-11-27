@@ -494,7 +494,7 @@ private fun scopeStatus(mask: Int): String {
     return if (parts.isEmpty()) stringResource(R.string.action_hide_off) else stringResource(R.string.scope_hidden_in, parts.joinToString(", "))
 }
 
-/** Advanced mode: the master card (same look as the other action cards) and, right below, one tile per place. */
+/** Advanced mode: compact hide card by default; tapping the card expands/collapses the per-place toggles. */
 @Composable
 private fun HideScopeCard(vm: HfwViewModel, app: AppItem) {
     val scheme = MaterialTheme.colorScheme
@@ -503,59 +503,64 @@ private fun HideScopeCard(vm: HfwViewModel, app: AppItem) {
     val custom = vm.hasCustomHideScope(app)
     val on = mask != 0
     val count = Integer.bitCount(mask and H.ALL)
-    val setAll: (Boolean) -> Unit = { want -> if (want) vm.setHideScope(app, H.ALL) else vm.setHidden(app, false) }
+    var expanded by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     ActionCard(
         icon = if (on) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
-        title = stringResource(R.string.scope_all),
+        title = stringResource(R.string.action_hide),
         subtitle = when {
             !on -> stringResource(R.string.action_hide_off)
+            custom -> stringResource(R.string.scope_custom_sub) + " " + stringResource(R.string.scope_count_fmt, count, 7)
             count == 7 -> stringResource(R.string.scope_everywhere)
             else -> stringResource(R.string.scope_count_fmt, count, 7) + " · " + scopeStatus(mask)
         },
-        onClick = { setAll(!on) },
-        trailing = { Switch(checked = on, onCheckedChange = { setAll(it) }) },
+        onClick = { expanded = !expanded },
+        trailing = { Switch(checked = on, onCheckedChange = { want -> vm.setHidden(app, want) }) },
     )
-    Spacer(Modifier.height(12.dp))
-    class Place(val flag: Int, val icon: ImageVector, val title: Int, val sub: Int)
-    val places = listOf(
-        Place(H.LAUNCHER, Icons.Rounded.Home, R.string.scope_launcher, R.string.scope_launcher_sub),
-        Place(H.SUGGESTIONS, Icons.Rounded.Search, R.string.scope_suggestions, R.string.scope_suggestions_sub),
-        Place(H.SHORTCUT_CONFIGS, Icons.Rounded.Tune, R.string.scope_shortcut_configs, R.string.scope_shortcut_configs_sub),
-        Place(H.SHORTCUTS, Icons.Rounded.Bolt, R.string.scope_shortcuts, R.string.scope_shortcuts_sub),
-        Place(H.INTENT_CHOOSER, Icons.AutoMirrored.Rounded.OpenInNew, R.string.scope_chooser, R.string.scope_chooser_sub),
-        Place(H.SHARE_TARGETS, Icons.Rounded.Share, R.string.scope_share_targets, R.string.scope_share_targets_sub),
-        Place(H.WIDGETS, Icons.Rounded.Widgets, R.string.scope_widgets, R.string.scope_widgets_sub),
-    )
-    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        places.forEachIndexed { i, pl ->
-            val checked = (mask and pl.flag) != 0
-            Surface(
-                onClick = { vm.toggleHideScope(app, pl.flag) },
-                shape = dev.hfw.ui.components.segmentShape(i, places.size, big = 28.dp, small = 8.dp),
-                color = scheme.surfaceContainerHigh,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Row(
-                    Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(pl.icon, contentDescription = null, tint = if (checked) scheme.primary else scheme.onSurfaceVariant)
-                    Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
-                        Text(stringResource(pl.title), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-                        Text(
-                            stringResource(pl.sub),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = scheme.onSurfaceVariant,
-                        )
+    androidx.compose.animation.AnimatedVisibility(visible = expanded) {
+        Column {
+            Spacer(Modifier.height(10.dp))
+            class Place(val flag: Int, val icon: ImageVector, val title: Int, val sub: Int)
+            val places = listOf(
+                Place(H.LAUNCHER, Icons.Rounded.Home, R.string.scope_launcher, R.string.scope_launcher_sub),
+                Place(H.SUGGESTIONS, Icons.Rounded.Search, R.string.scope_suggestions, R.string.scope_suggestions_sub),
+                Place(H.SHORTCUT_CONFIGS, Icons.Rounded.Tune, R.string.scope_shortcut_configs, R.string.scope_shortcut_configs_sub),
+                Place(H.SHORTCUTS, Icons.Rounded.Bolt, R.string.scope_shortcuts, R.string.scope_shortcuts_sub),
+                Place(H.INTENT_CHOOSER, Icons.AutoMirrored.Rounded.OpenInNew, R.string.scope_chooser, R.string.scope_chooser_sub),
+                Place(H.SHARE_TARGETS, Icons.Rounded.Share, R.string.scope_share_targets, R.string.scope_share_targets_sub),
+                Place(H.WIDGETS, Icons.Rounded.Widgets, R.string.scope_widgets, R.string.scope_widgets_sub),
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                places.forEachIndexed { i, pl ->
+                    val checked = (mask and pl.flag) != 0
+                    Surface(
+                        onClick = { vm.toggleHideScope(app, pl.flag) },
+                        shape = dev.hfw.ui.components.segmentShape(i, places.size, big = 28.dp, small = 8.dp),
+                        color = scheme.surfaceContainerHigh,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(pl.icon, contentDescription = null, tint = if (checked) scheme.primary else scheme.onSurfaceVariant)
+                            Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
+                                Text(stringResource(pl.title), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                                Text(
+                                    stringResource(pl.sub),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = scheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(checked = checked, onCheckedChange = { vm.toggleHideScope(app, pl.flag) })
+                        }
                     }
-                    Switch(checked = checked, onCheckedChange = { vm.toggleHideScope(app, pl.flag) })
                 }
             }
-        }
-    }
-    if (custom) {
-        androidx.compose.material3.TextButton(onClick = { vm.setHideScope(app, null) }) {
-            Text(stringResource(R.string.scope_reset))
+            if (custom) {
+                androidx.compose.material3.TextButton(onClick = { vm.setHideScope(app, null) }) {
+                    Text(stringResource(R.string.scope_reset))
+                }
+            }
         }
     }
 }
