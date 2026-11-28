@@ -20,9 +20,18 @@ object BackupManager {
 
     fun exportZip(store: RuleStore, out: OutputStream): Boolean = try {
         val (state, icons) = store.exportSnapshot()
+        val rules = StateCodec.encodeText(state, includeRuntime = false).toByteArray(Charsets.UTF_8)
+        // Never write an archive that importZip would refuse: apply the same limits up front.
+        if (rules.size > Limits.MAX_STATE_FILE_BYTES || icons.size + 1 > MAX_ENTRIES) return false
+        var total = rules.size
+        for ((_, bytes) in icons) {
+            if (bytes.isEmpty() || bytes.size > Limits.MAX_ICON_BYTES) return false
+            total += bytes.size
+            if (total > MAX_TOTAL_BYTES) return false
+        }
         ZipOutputStream(out).use { zos ->
             zos.putNextEntry(ZipEntry(RULES_ENTRY))
-            zos.write(StateCodec.encodeText(state, includeRuntime = false).toByteArray(Charsets.UTF_8))
+            zos.write(rules)
             zos.closeEntry()
 
             for ((name, bytes) in icons) {

@@ -187,12 +187,19 @@ class RuleStore(private val dir: File) {
     fun restoreBackup(imported: StateData, icons: Map<String, ByteArray>): Boolean = synchronized(lock) {
         val next = local(imported)
         iconsDir().mkdirs()
+        // Remember every icon file we overwrite so a failure halfway leaves the old icons exactly as they were.
+        val previous = LinkedHashMap<File, ByteArray?>()
+        fun rollback() {
+            for ((f, old) in previous) runCatching { if (old == null) f.delete() else DurableFiles.writeAtomically(f.path, old) }
+        }
         for ((name, bytes) in icons) {
             if (!isReferencedIconFile(name, next)) continue
-            try { DurableFiles.writeAtomically(File(iconsDir(), name).path, bytes) } catch (_: Throwable) { return false }
+            val f = File(iconsDir(), name)
+            previous[f] = try { if (f.isFile) f.readBytes() else null } catch (_: Throwable) { rollback(); return false }
+            try { DurableFiles.writeAtomically(f.path, bytes) } catch (_: Throwable) { rollback(); return false }
         }
         val q = listOf(Op.Replace(next))
-        if (!persist(next, q)) return false
+        if (!persist(next, q)) { rollback(); return false }
         state = next
         queue = q
         cleanupIcons(next)

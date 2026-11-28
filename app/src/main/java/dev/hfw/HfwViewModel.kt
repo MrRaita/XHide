@@ -420,11 +420,14 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
             .filter { (s.icons[it]?.get(pkg)?.iconRev ?: 0L) <= 0L }
             .toList()
         if (otherUsers.isNotEmpty()) {
-            val legacyBytes = store.iconBytes(pkg)?.first ?: return
-            for (otherUser in otherUsers) {
-                val rev = store.nextIconRev(pkg, otherUser)
-                ops.add(Op.Icon(pkg, rev, otherUser))
-                extraIcons.add("$otherUser:$pkg" to legacyBytes)
+            // If the legacy file is gone there is nothing to hand to the other profiles, but the legacy rule must still be cleared below.
+            val legacyBytes = store.iconBytes(pkg)?.first
+            if (legacyBytes != null) {
+                for (otherUser in otherUsers) {
+                    val rev = store.nextIconRev(pkg, otherUser)
+                    ops.add(Op.Icon(pkg, rev, otherUser))
+                    extraIcons.add("$otherUser:$pkg" to legacyBytes)
+                }
             }
         }
         ops.add(Op.Icon(pkg, 0L, null))
