@@ -43,8 +43,6 @@ internal object Runtime {
         at.getMethod("currentActivityThread").invoke(null)?.let { at.getMethod("getSystemContext").invoke(it) as? Context }
     }.getOrNull()?.also { lastContext = it }
 
-    fun lastKnownContext(): Context? = lastContext
-
     // ---- hot reload lifecycle (API 102 only; on 101 acceptingReload simply stays false) ------------
 
     val lifecycleLock = Any()

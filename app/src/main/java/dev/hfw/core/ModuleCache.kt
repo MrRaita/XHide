@@ -237,14 +237,6 @@ object ModuleCache {
         }
     }
 
-    internal fun detectModuleFromAppInfo(
-        packageName: String,
-        appInfo: ApplicationInfo,
-        context: Context?,
-        userHandle: UserHandle?,
-        backend: HookBackend
-    ): Boolean = scanModule(packageName, appInfo, context, userHandle, backend) ?: false
-
     private val XPOSED_META_KEYS = listOf(
         "xposedmodule",
         "xposedminversion",
@@ -336,7 +328,4 @@ object ModuleCache {
         return result
     }
 
-    fun clearCache() {
-        apkModuleCache.clear()
-    }
 }

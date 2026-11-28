@@ -105,7 +105,6 @@ data class StateData(
         return out.toList()
     }
 
-    fun ruleOf(pkg: String): AppRule? = apps[pkg]
     fun iconRuleOf(pkg: String, userId: Int): AppRule? = icons[userId]?.get(pkg) ?: apps[pkg]
     fun labelOf(pkg: String): String? = apps[pkg]?.label
     fun labelOf(pkg: String, userId: Int): String? = labels[userId]?.get(pkg) ?: apps[pkg]?.label

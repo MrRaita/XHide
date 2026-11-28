@@ -73,56 +73,6 @@ fun SectionTitle(text: String, modifier: Modifier = Modifier) {
     )
 }
 
-/** Large tile used on the Home bento grid. */
-@Composable
-fun BentoTile(
-    icon: ImageVector,
-    value: String,
-    label: String,
-    container: Color,
-    content: Color,
-    modifier: Modifier = Modifier,
-    big: Boolean = false,
-    onClick: (() -> Unit)? = null,
-) {
-    val shape = RoundedCornerShape(32.dp)
-    val inner: @Composable () -> Unit = {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(20.dp),
-            verticalArrangement = Arrangement.SpaceBetween,
-        ) {
-            ShapedIcon(
-                icon = icon,
-                background = content.copy(alpha = 0.14f),
-                tint = content,
-                size = 44.dp,
-                shape = cookieShape(),
-            )
-            Spacer(Modifier.height(8.dp))
-            Column {
-                Text(
-                    text = value,
-                    style = if (big) MaterialTheme.typography.displayMedium else MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = content,
-                )
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = content.copy(alpha = 0.8f),
-                )
-            }
-        }
-    }
-    if (onClick != null) {
-        Surface(onClick = onClick, modifier = modifier, shape = shape, color = container, contentColor = content) { inner() }
-    } else {
-        Surface(modifier = modifier, shape = shape, color = container, contentColor = content) { inner() }
-    }
-}
-
 /** Tiny status icons shown at the end of an app row. */
 @Composable
 fun StatusBadges(app: AppItem, modifier: Modifier = Modifier) {
@@ -163,32 +113,3 @@ fun Pill(text: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** One "label ......... value" status row with a coloured dot. */
-@Composable
-fun StatusLine(label: String, value: String, ok: Boolean, content: Color, modifier: Modifier = Modifier) {
-    Row(modifier = modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            modifier = Modifier
-                .size(9.dp)
-                .clip(CircleShape)
-                .background(if (ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error),
-        )
-        Spacer(Modifier.width(12.dp))
-        Text(text = label, style = MaterialTheme.typography.bodyMedium, color = content.copy(alpha = 0.85f), modifier = Modifier.weight(1f))
-        Text(text = value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = content)
-    }
-}
-
-@Composable
-fun ClickableCard(
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    container: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
-    content: @Composable () -> Unit,
-) {
-    Surface(onClick = onClick, modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(28.dp), color = container) {
-        content()
-    }
-}
-
-fun Modifier.clickableRow(onClick: () -> Unit): Modifier = this.clickable(onClick = onClick)

@@ -473,23 +473,6 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
         if (apply(ops.distinct(), extraIcons = extraIcons)) log(ActivityKind.RESET, item)
     }
 
-    /** Resets both custom name and custom icon for [item]'s profile (or all profiles when [allProfiles] is true). */
-    fun resetLook(item: AppItem, allProfiles: Boolean = false) {
-        val s = store.state
-        val ops = ArrayList<Op>()
-        val extraIcons = ArrayList<Pair<String, ByteArray>>()
-        if (allProfiles) {
-            for ((uid, m) in s.labels) if (item.pkg in m) ops.add(Op.Name(item.pkg, null, uid))
-            for ((uid, m) in s.icons) if (item.pkg in m) ops.add(Op.Icon(item.pkg, 0L, uid))
-            if (s.apps[item.pkg]?.label != null) ops.add(Op.Name(item.pkg, null, null))
-            if ((s.apps[item.pkg]?.iconRev ?: 0L) > 0L) ops.add(Op.Icon(item.pkg, 0L, null))
-        } else {
-            addNameResetOps(item.pkg, setOf(item.userId), ops)
-            addIconResetOps(item.pkg, setOf(item.userId), ops, extraIcons)
-        }
-        if (ops.isNotEmpty() && apply(ops, extraIcons = extraIcons)) log(ActivityKind.RESET, item)
-    }
-
     /** Resets name, icon, and hide state for [item] (single profile or all profiles via [Op.Forget]). */
     fun resetApp(item: AppItem, allProfiles: Boolean = false) {
         val extraIcons = ArrayList<Pair<String, ByteArray>>()
@@ -504,16 +487,6 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         if (apply(ops, extraIcons = extraIcons)) log(ActivityKind.RESET, item)
-    }
-
-    /** Resets all name, icon, and hide customizations for an entire profile [userId]. */
-    fun resetProfile(userId: Int) {
-        val s = store.state
-        val ops = ArrayList<Op>()
-        s.hide[userId]?.keys?.forEach { pkg -> ops.add(Op.Hide(userId, pkg, null)) }
-        s.labels[userId]?.keys?.forEach { pkg -> ops.add(Op.Name(pkg, null, userId)) }
-        s.icons[userId]?.keys?.forEach { pkg -> ops.add(Op.Icon(pkg, 0L, userId)) }
-        if (ops.isNotEmpty()) apply(ops)
     }
 
     /** Asks the hook to re-apply and re-announce every customized package, rebuilding overlays too. */

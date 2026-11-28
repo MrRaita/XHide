@@ -1,5 +1,6 @@
 package dev.hfw.ui.screens
 
+import androidx.compose.ui.graphics.luminance
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -131,8 +132,12 @@ private fun StatusCard(vm: HfwViewModel, active: Boolean, onShowModule: () -> Un
     val fgTarget = when (state) { true -> scheme.onPrimaryContainer; false -> scheme.onErrorContainer; null -> scheme.onSurfaceVariant }
     val dotTarget = when (state) { true -> scheme.primary; false -> scheme.error; null -> scheme.outline }
     val spec = MaterialTheme.motionScheme.defaultEffectsSpec<Color>()
-    val bg by animateColorAsState(bgTarget, spec, label = "statusBg")
-    val fg by animateColorAsState(fgTarget, spec, label = "statusFg")
+    val bgAnim by animateColorAsState(bgTarget, spec, label = "statusBg")
+    val fgAnim by animateColorAsState(fgTarget, spec, label = "statusFg")
+    // Dark theme: the picture and the tint stay dark (the state colour only tints it) and the text turns light.
+    val isDark = scheme.background.luminance() < 0.5f
+    val bg = if (isDark) androidx.compose.ui.graphics.lerp(bgAnim, scheme.surface, 0.72f) else bgAnim
+    val fg = if (isDark) scheme.onSurface else fgAnim
     val dot by animateColorAsState(dotTarget, spec, label = "statusDot")
 
     val title = when {
@@ -168,7 +173,7 @@ private fun StatusCard(vm: HfwViewModel, active: Boolean, onShowModule: () -> Un
                 modifier = Modifier.matchParentSize(),
             )
             // State tint over the picture: green-ish when working, red when there is a problem, neutral while checking.
-            Box(Modifier.matchParentSize().background(bg.copy(alpha = 0.62f)))
+            Box(Modifier.matchParentSize().background(bg.copy(alpha = if (isDark) 0.55f else 0.62f)))
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 18.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     HookStatusBadge(state = state, color = dot, size = 26.dp, active = active)

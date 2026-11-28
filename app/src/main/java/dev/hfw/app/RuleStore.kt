@@ -117,9 +117,6 @@ class RuleStore(private val dir: File) {
         try { f.readBytes() to rev } catch (_: Throwable) { null }
     }
 
-    fun hasIconFile(pkg: String, userId: Int? = null): Boolean =
-        if (userId != null) iconFile(userId, pkg).isFile else iconFile(pkg).isFile
-
     /** Next ops to send, bounded by count and encoded size. */
     fun batch(maxOps: Int, maxChars: Int): List<Op> {
         val out = ArrayList<Op>()

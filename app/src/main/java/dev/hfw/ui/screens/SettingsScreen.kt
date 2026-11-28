@@ -324,23 +324,41 @@ fun SettingsScreen(
 
             // ---- about ----
             item(key = "about") {
-                Group(R.string.group_about, 2) {
-                    InfoRow(Icons.Rounded.Info, stringResource(R.string.about_version), BuildConfig.VERSION_NAME, true)
-                    Divider()
-                    InfoRow(Icons.Rounded.Security, stringResource(R.string.about_hook), if (vm.hookVersion == 0) "—" else if (vm.hookVersion == BuildConfig.VERSION_CODE) "${BuildConfig.VERSION_NAME} (${vm.hookVersion})" else "${vm.hookVersion} ≠ ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", !vm.restartNeeded && (vm.hookVersion == 0 || vm.hookVersion == BuildConfig.VERSION_CODE))
-                }
+                // Plain centred footer: versions side by side, the source link below.
                 val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
-                androidx.compose.material3.TextButton(
-                    onClick = { runCatching { uriHandler.openUri("https://github.com/everyoneexe/HFW") } },
-                    modifier = Modifier.padding(top = 4.dp),
+                val hookOk = !vm.restartNeeded && (vm.hookVersion == 0 || vm.hookVersion == BuildConfig.VERSION_CODE)
+                val hookText = when (vm.hookVersion) {
+                    0 -> "—"
+                    BuildConfig.VERSION_CODE -> "${BuildConfig.VERSION_NAME} (${vm.hookVersion})"
+                    else -> "${vm.hookVersion} ≠ ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
+                }
+                val muted = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                Column(
+                    Modifier.fillMaxWidth().padding(top = 28.dp, bottom = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Icon(
-                        androidx.compose.ui.res.painterResource(R.drawable.ic_github),
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
+                    androidx.compose.foundation.layout.Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(20.dp)) {
+                        Text(
+                            "${stringResource(R.string.about_app)} ${BuildConfig.VERSION_NAME}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = muted,
+                        )
+                        Text(
+                            "${stringResource(R.string.about_module)} $hookText",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (hookOk) muted else MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    Text(
+                        stringResource(R.string.about_source),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = muted,
+                        modifier = Modifier
+                            .padding(top = 4.dp)
+                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                            .clickable { runCatching { uriHandler.openUri("https://github.com/everyoneexe/HFW") } }
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
                     )
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.about_github), fontSize = 13.sp)
                 }
             }
         }

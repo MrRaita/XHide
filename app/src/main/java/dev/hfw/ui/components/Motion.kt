@@ -77,28 +77,6 @@ fun Modifier.pressScale(source: InteractionSource, pressedScale: Float = 0.96f):
     }
 }
 
-/**
- * Fade + rise entrance (for plain scrolling columns), delayed by [index]. Plays only when [enabled] was true at the first
- * composition; otherwise the content is shown at once.
- */
-@Composable
-fun Modifier.staggeredEnter(index: Int, enabled: Boolean = true, stepMillis: Long = 55L, riseFrom: Dp = 28.dp): Modifier {
-    val reduce = LocalReduceMotion.current
-    val play = remember { enabled && !reduce }
-    val progress = remember { Animatable(if (play) 0f else 1f) }
-    LaunchedEffect(Unit) {
-        if (play) {
-            delay(index * stepMillis)
-            progress.animateTo(1f, spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessLow))
-        }
-    }
-    return this.graphicsLayer {
-        val p = progress.value
-        alpha = p.coerceIn(0f, 1f)
-        translationY = (1f - p) * riseFrom.toPx()
-    }
-}
-
 /** Counts up from 0 only when [animateFromZero] is set; otherwise shows the value at once. */
 @Composable
 fun rememberCountUp(target: Int, animateFromZero: Boolean, startDelayMillis: Long = 0L, durationMillis: Int = 600): Int {
