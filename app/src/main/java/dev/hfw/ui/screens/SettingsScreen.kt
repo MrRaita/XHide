@@ -1,5 +1,8 @@
 package dev.hfw.ui.screens
 
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.foundation.lazy.items
@@ -325,6 +328,19 @@ fun SettingsScreen(
                     InfoRow(Icons.Rounded.Info, stringResource(R.string.about_version), BuildConfig.VERSION_NAME, true)
                     Divider()
                     InfoRow(Icons.Rounded.Security, stringResource(R.string.about_hook), if (vm.hookVersion == 0) "—" else if (vm.hookVersion == BuildConfig.VERSION_CODE) "${BuildConfig.VERSION_NAME} (${vm.hookVersion})" else "${vm.hookVersion} ≠ ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", !vm.restartNeeded && (vm.hookVersion == 0 || vm.hookVersion == BuildConfig.VERSION_CODE))
+                }
+                val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+                androidx.compose.material3.TextButton(
+                    onClick = { runCatching { uriHandler.openUri("https://github.com/everyoneexe/HFW") } },
+                    modifier = Modifier.padding(top = 4.dp),
+                ) {
+                    Icon(
+                        androidx.compose.ui.res.painterResource(R.drawable.ic_github),
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.about_github), fontSize = 13.sp)
                 }
             }
         }

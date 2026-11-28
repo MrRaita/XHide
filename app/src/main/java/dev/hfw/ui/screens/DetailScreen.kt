@@ -1,5 +1,6 @@
 package dev.hfw.ui.screens
 
+import androidx.compose.ui.graphics.luminance
 import android.text.format.DateFormat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -154,6 +155,9 @@ fun DetailScreen(
     val collapseP: () -> Float = { (scroll.value / travel).coerceIn(0f, 1f) }
     val flightReg = dev.hfw.ui.components.LocalIconFlight.current
     val blurredIcon = dev.hfw.ui.components.rememberBlurredAppIcon(app)
+    // In light themes the card must not melt into the page: a darker base, a lighter wash and a hairline border.
+    val lightTheme = scheme.background.luminance() > 0.5f
+    val heroTint = if (lightTheme) scheme.surfaceContainerHigh else scheme.surfaceContainerLow
 
     // Hero geometry (px, content space), derived from measured sizes only so graphicsLayer transforms cannot pollute it.
     // The icon and the name are drawn by an overlay above the top bar; the card holds invisible placeholders for them.
@@ -221,7 +225,8 @@ fun DetailScreen(
                             alpha = 1f - q
                         },
                     shape = RoundedCornerShape(28.dp),
-                    color = scheme.surfaceContainerLow,
+                    color = if (lightTheme) scheme.surfaceContainerHigh else scheme.surfaceContainerLow,
+                    border = if (lightTheme) androidx.compose.foundation.BorderStroke(1.dp, scheme.outlineVariant) else null,
                 ) {
                     Box(Modifier.fillMaxWidth()) {
                         if (blurredIcon != null) {
@@ -237,8 +242,8 @@ fun DetailScreen(
                                     .background(
                                         androidx.compose.ui.graphics.Brush.horizontalGradient(
                                             colors = listOf(
-                                                scheme.surfaceContainerLow.copy(alpha = 0.62f),
-                                                scheme.surfaceContainerLow.copy(alpha = 0.86f),
+                                                heroTint.copy(alpha = if (lightTheme) 0.30f else 0.62f),
+                                                heroTint.copy(alpha = if (lightTheme) 0.62f else 0.86f),
                                             ),
                                         ),
                                     ),
@@ -590,8 +595,10 @@ private fun HideScopeCard(vm: HfwViewModel, app: AppItem, onToggleHide: (Boolean
     )
     Surface(shape = RoundedCornerShape(28.dp), color = scheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth()) {
         Column {
+            // One tap target: the header row and the arrow below it; only the switch handles its own taps.
+            Column(Modifier.fillMaxWidth().clickable { expanded = !expanded }) {
             Row(
-                Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 8.dp),
+                Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 ShapedIcon(
@@ -618,13 +625,14 @@ private fun HideScopeCard(vm: HfwViewModel, app: AppItem, onToggleHide: (Boolean
                 Switch(checked = on, onCheckedChange = onToggleHide)
             }
             // Arrow on the card's bottom edge: down while closed, up while open.
-            Box(Modifier.fillMaxWidth().height(28.dp).clickable { expanded = !expanded }, contentAlignment = Alignment.Center) {
+            Box(Modifier.fillMaxWidth().height(28.dp), contentAlignment = Alignment.Center) {
                 Icon(
                     Icons.Rounded.KeyboardArrowDown,
                     contentDescription = null,
                     tint = scheme.onSurfaceVariant,
                     modifier = Modifier.graphicsLayer { rotationZ = arrow },
                 )
+            }
             }
             androidx.compose.animation.AnimatedVisibility(
                 visible = expanded,

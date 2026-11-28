@@ -142,7 +142,7 @@ fun ExpandingNavBar(
     }
 }
 
-/** Compact floating bar: a narrow pill with icons only; the selected tab's rounded-square highlight slides between them. */
+/** Compact floating bar: a narrow pill with icons only; the selected tab's highlight (same colour and shape as the wide bar) slides between them. */
 @Composable
 fun FloatingNavBar(
     tabs: List<MainTab>,
@@ -173,21 +173,21 @@ fun FloatingNavBar(
                 Modifier
                     .offset { IntOffset(x.roundToInt(), 0) }
                     .size(itemSize)
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(cs.secondaryContainer),
+                    .clip(CircleShape)
+                    .background(cs.primaryContainer),
             )
             Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
                 tabs.forEach { tab ->
                     val selected = tab == current
                     val fg by animateColorAsState(
-                        targetValue = if (selected) cs.onSecondaryContainer else cs.onSurfaceVariant,
+                        targetValue = if (selected) cs.onPrimaryContainer else cs.onSurfaceVariant,
                         animationSpec = if (reduceMotion) snap() else tween(200),
                         label = "floatfg",
                     )
                     Box(
                         Modifier
                             .size(itemSize)
-                            .clip(RoundedCornerShape(20.dp))
+                            .clip(CircleShape)
                             .selectable(selected = selected, role = Role.Tab, onClick = { onSelect(tab) }),
                         contentAlignment = Alignment.Center,
                     ) {

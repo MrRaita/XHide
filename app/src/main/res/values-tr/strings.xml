@@ -111,6 +111,7 @@
     <string name="profile_private">Özel alan</string>
     <string name="scope_system_sub">Kapsam etkin</string>
     <string name="scope_android_sub">Kapsam etkin</string>
+    <string name="about_github">GitHub</string>
     <string name="about_version">Sürüm</string>
     <string name="hero_offline">Modüle ulaşılamıyor</string>
     <string name="hero_offline_sub">Değişiklikler kuyruğa alınır, modül yanıt verince gönderilir</string>

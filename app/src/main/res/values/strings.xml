@@ -111,6 +111,7 @@
     <string name="profile_private">Private space</string>
     <string name="scope_system_sub">Scope is active</string>
     <string name="scope_android_sub">Scope is active</string>
+    <string name="about_github">GitHub</string>
     <string name="about_version">Version</string>
     <string name="hero_offline">Hook not reachable</string>
     <string name="hero_offline_sub">Edits are queued and sent when the module answers</string>
