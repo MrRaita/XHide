@@ -151,6 +151,13 @@ internal class IconOverlays {
                     HealthLog.event("overlay for $pkg works with a single unqualified entry only")
                 } catch (t2: Throwable) {
                     HealthLog.event("overlay register failed for $pkg even with one entry: ${root(t2)}")
+                    if (root(t2).contains("DeadObject")) {
+                        // same SELinux block as above, just seen on the fallback attempt
+                        blocked = true
+                        lastResult = 2
+                        HealthLog.event("SELinux blocks icon overlays: install the ${Identity.APP_NAME} SELinux module")
+                        return Outcome(Overlay.BLOCKED, 0L)
+                    }
                     return Outcome(Overlay.FAILED, 0L)
                 }
             }

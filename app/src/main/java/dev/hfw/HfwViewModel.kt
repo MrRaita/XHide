@@ -535,9 +535,12 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
     fun exportBackup(uri: Uri, onDone: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
             val ok = withContext(Dispatchers.IO) {
-                getApplication<Application>().contentResolver.openOutputStream(uri)?.use {
-                    BackupManager.exportZip(store, it)
-                } ?: false
+                // The picked document can vanish or lose its permission: treat that as a failed export, not a crash.
+                runCatching {
+                    getApplication<Application>().contentResolver.openOutputStream(uri)?.use {
+                        BackupManager.exportZip(store, it)
+                    } ?: false
+                }.getOrDefault(false)
             }
             _messages.tryEmit(if (ok) R.string.msg_backup_exported else R.string.msg_backup_export_failed)
             onDone(ok)
@@ -547,9 +550,11 @@ class HfwViewModel(application: Application) : AndroidViewModel(application) {
     fun importBackup(uri: Uri, onDone: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
             val ok = withContext(Dispatchers.IO) {
-                getApplication<Application>().contentResolver.openInputStream(uri)?.use {
-                    BackupManager.importZip(store, it)
-                } ?: false
+                runCatching {
+                    getApplication<Application>().contentResolver.openInputStream(uri)?.use {
+                        BackupManager.importZip(store, it)
+                    } ?: false
+                }.getOrDefault(false)
             }
             if (ok) refresh()
             _messages.tryEmit(if (ok) R.string.msg_backup_imported else R.string.msg_backup_import_failed)
