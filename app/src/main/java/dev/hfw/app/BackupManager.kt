@@ -18,31 +18,33 @@ object BackupManager {
     private const val MAX_TOTAL_BYTES = 16 * 1024 * 1024
     private const val MAX_ENTRIES = Limits.MAX_PACKAGES + 16
 
-    fun exportZip(store: RuleStore, out: OutputStream): Boolean = try {
-        val (state, icons) = store.exportSnapshot()
-        val rules = StateCodec.encodeText(state, includeRuntime = false).toByteArray(Charsets.UTF_8)
-        // Never write an archive that importZip would refuse: apply the same limits up front.
-        if (rules.size > Limits.MAX_STATE_FILE_BYTES || icons.size + 1 > MAX_ENTRIES) return false
-        var total = rules.size
-        for ((_, bytes) in icons) {
-            if (bytes.isEmpty() || bytes.size > Limits.MAX_ICON_BYTES) return false
-            total += bytes.size
-            if (total > MAX_TOTAL_BYTES) return false
-        }
-        ZipOutputStream(out).use { zos ->
-            zos.putNextEntry(ZipEntry(RULES_ENTRY))
-            zos.write(rules)
-            zos.closeEntry()
-
-            for ((name, bytes) in icons) {
-                zos.putNextEntry(ZipEntry("$ICONS_PREFIX$name"))
-                zos.write(bytes)
-                zos.closeEntry()
+    fun exportZip(store: RuleStore, out: OutputStream): Boolean {
+        return try {
+            val (state, icons) = store.exportSnapshot()
+            val rules = StateCodec.encodeText(state, includeRuntime = false).toByteArray(Charsets.UTF_8)
+            // Never write an archive that importZip would refuse: apply the same limits up front.
+            if (rules.size > Limits.MAX_STATE_FILE_BYTES || icons.size + 1 > MAX_ENTRIES) return false
+            var total = rules.size
+            for ((_, bytes) in icons) {
+                if (bytes.isEmpty() || bytes.size > Limits.MAX_ICON_BYTES) return false
+                total += bytes.size
+                if (total > MAX_TOTAL_BYTES) return false
             }
+            ZipOutputStream(out).use { zos ->
+                zos.putNextEntry(ZipEntry(RULES_ENTRY))
+                zos.write(rules)
+                zos.closeEntry()
+
+                for ((name, bytes) in icons) {
+                    zos.putNextEntry(ZipEntry("$ICONS_PREFIX$name"))
+                    zos.write(bytes)
+                    zos.closeEntry()
+                }
+            }
+            true
+        } catch (_: Throwable) {
+            false
         }
-        true
-    } catch (_: Throwable) {
-        false
     }
 
     fun importZip(
