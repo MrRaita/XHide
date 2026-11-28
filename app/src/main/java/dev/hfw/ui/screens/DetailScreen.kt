@@ -7,6 +7,8 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -153,6 +155,47 @@ fun DetailScreen(
     val flightReg = dev.hfw.ui.components.LocalIconFlight.current
     val blurredIcon = dev.hfw.ui.components.rememberBlurredAppIcon(app)
 
+    // Hero geometry (px, content space), derived from measured sizes only so graphicsLayer transforms cannot pollute it.
+    // The icon and the name are drawn by an overlay above the top bar; the card holds invisible placeholders for them.
+    val colH = androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    val nameH = androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    val cardW = androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    val cardH = androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    val heroReady = colH.floatValue > 0f && cardW.floatValue > 0f
+    val iconPx = with(density) { 76.dp.toPx() }
+    val padPx = with(density) { 18.dp.toPx() }
+    val sidePx = with(density) { 16.dp.toPx() }
+    val cardTopPx = with(density) { barDp.toPx() + 8.dp.toPx() }
+    val rowH = maxOf(iconPx, colH.floatValue)
+    val iconRestX = sidePx + padPx
+    val iconRestY = cardTopPx + padPx + (rowH - iconPx) / 2f
+    val nameRestX = iconRestX + iconPx + sidePx
+    val nameRestY = cardTopPx + padPx + (rowH - colH.floatValue) / 2f
+    val nameWidthPx = (cardW.floatValue - 2f * padPx - iconPx - sidePx).coerceAtLeast(1f)
+    val targetIconCx = with(density) { 76.dp.toPx() }
+    val targetCy = statusPx + with(density) { 28.dp.toPx() }
+    val targetIconScale = 36f / 76f
+    val targetNameX = with(density) { 104.dp.toPx() }
+    val targetNameScale = 16f / 22f
+    fun lerpF(a: Float, b: Float, t: Float) = a + (b - a) * t
+    fun iconRectAt(scrollV: Int): androidx.compose.ui.geometry.Rect {
+        val p = (scrollV / travel).coerceIn(0f, 1f)
+        val cx = lerpF(iconRestX + iconPx / 2f, targetIconCx, p)
+        val cy = lerpF(iconRestY - scrollV + iconPx / 2f, targetCy, p)
+        val half = iconPx * lerpF(1f, targetIconScale, p) / 2f
+        return androidx.compose.ui.geometry.Rect(cx - half, cy - half, cx + half, cy + half)
+    }
+    // Keep the icon-flight registry on the icon's real current position (also when collapsed into the bar);
+    // frozen while a flight (open or predictive back) is running.
+    androidx.compose.runtime.LaunchedEffect(app.key, heroReady, iconRestY, cardW.floatValue) {
+        androidx.compose.runtime.snapshotFlow { if (heroReady) iconRectAt(scroll.value) else null }.collect { r ->
+            if (r != null && (flightReg.flying == null || scroll.value == 0)) {
+                flightReg.detailRect = r
+                flightReg.detailKey = app.key
+            }
+        }
+    }
+
     Surface(modifier = modifier, color = scheme.background, contentColor = scheme.onBackground) {
         Box(Modifier.fillMaxSize()) {
             Column(
@@ -163,7 +206,20 @@ fun DetailScreen(
             ) {
                 Spacer(Modifier.height(barDp + 8.dp))
                 Surface(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onSizeChanged { cardW.floatValue = it.width.toFloat(); cardH.floatValue = it.height.toFloat() }
+                        .graphicsLayer {
+                            // The soft backdrop melts into the icon's centre while the icon travels up into the bar.
+                            val q = (collapseP() / 0.85f).coerceIn(0f, 1f)
+                            val px = ((iconRestX + iconPx / 2f - sidePx) / cardW.floatValue.coerceAtLeast(1f)).coerceIn(0f, 1f)
+                            val py = ((iconRestY + iconPx / 2f - cardTopPx) / cardH.floatValue.coerceAtLeast(1f)).coerceIn(0f, 1f)
+                            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(px, py)
+                            val sc = 1f - q * 0.97f
+                            scaleX = sc
+                            scaleY = sc
+                            alpha = 1f - q
+                        },
                     shape = RoundedCornerShape(28.dp),
                     color = scheme.surfaceContainerLow,
                 ) {
@@ -191,32 +247,24 @@ fun DetailScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(18.dp)
-                                .graphicsLayer { alpha = (1f - collapseP() * 1.4f).coerceIn(0f, 1f) },
+                                .padding(18.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                        Box(
-                            modifier = Modifier
-                                .size(76.dp)
-                                .onGloballyPositioned { coords ->
-                                    if (flightReg.flying == null || scroll.value == 0) {
-                                        flightReg.detailRect = coords.boundsInRoot()
-                                        flightReg.detailKey = app.key
-                                    }
-                                },
-                        ) {
-                            AppIcon(app, 76.dp, track = IconTrack.DETAIL, dimmed = app.hidden)
-                        }
+                        Spacer(Modifier.size(76.dp))
                         Spacer(Modifier.width(16.dp))
-                        Column(Modifier.weight(1f)) {
+                        Column(Modifier.weight(1f).onSizeChanged { colH.floatValue = it.height.toFloat() }) {
                             Text(
                                 text = app.displayLabel,
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = scheme.onSurface,
-                                maxLines = 2,
+                                maxLines = 1,
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .onSizeChanged { nameH.floatValue = it.height.toFloat() }
+                                    .graphicsLayer { alpha = 0f },
                             )
+                            Column(Modifier.graphicsLayer { alpha = (1f - collapseP() * 2.2f).coerceIn(0f, 1f) }) {
                             if (app.renamed) {
                                 Text(
                                     text = stringResource(R.string.original_name_fmt, app.label),
@@ -244,6 +292,7 @@ fun DetailScreen(
                                 if (app.isSystem) Pill(stringResource(R.string.pill_system))
                                 if (app.isModule) Pill(stringResource(R.string.pill_module))
                                 if (app.hidden) Pill(stringResource(R.string.pill_hidden))
+                            }
                             }
                         }
                     }
@@ -355,29 +404,46 @@ fun DetailScreen(
                 IconButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart).padding(start = 4.dp)) {
                     Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = stringResource(R.string.back), tint = scheme.onSurface)
                 }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .padding(start = 52.dp, end = 16.dp)
-                        .graphicsLayer {
-                            val t = ((collapseP() - 0.3f) / 0.7f).coerceIn(0f, 1f)
-                            alpha = t
-                            translationY = (1f - t) * with(density) { 10.dp.toPx() }
-                        },
-                ) {
-                    AppIcon(app, 28.dp, dimmed = app.hidden)
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        text = app.displayLabel,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = scheme.onSurface,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                    )
-                }
             }
+        }
+
+        // The icon and the name travel together from the hero card into the top bar (and back when scrolling down).
+        if (heroReady) {
+            Box(
+                Modifier
+                    .size(76.dp)
+                    .graphicsLayer {
+                        val r = iconRectAt(scroll.value)
+                        translationX = r.center.x - iconPx / 2f
+                        translationY = r.center.y - iconPx / 2f
+                        val sc = r.width / iconPx
+                        scaleX = sc
+                        scaleY = sc
+                    },
+            ) {
+                AppIcon(app, 76.dp, track = IconTrack.DETAIL, dimmed = app.hidden)
+            }
+            Text(
+                text = app.displayLabel,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = scheme.onSurface,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .width(with(density) { nameWidthPx.toDp() })
+                    .graphicsLayer {
+                        val p = collapseP()
+                        val sv = scroll.value
+                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
+                        val cy = lerpF(nameRestY - sv + nameH.floatValue / 2f, targetCy, p)
+                        translationX = lerpF(nameRestX, targetNameX, p)
+                        translationY = cy - nameH.floatValue / 2f
+                        val sc = lerpF(1f, targetNameScale, p)
+                        scaleX = sc
+                        scaleY = sc
+                    },
+            )
         }
     }
     }
@@ -497,7 +563,7 @@ private fun InfoLine(label: String, value: String) {
     }
 }
 
-/** Advanced mode: compact hide card by default; tapping the card expands/collapses the per-place toggles. */
+/** Advanced mode: the hide card grows downward on tap and the per-place switches slide in from the top. */
 @Composable
 private fun HideScopeCard(vm: HfwViewModel, app: AppItem, onToggleHide: (Boolean) -> Unit) {
     val scheme = MaterialTheme.colorScheme
@@ -507,60 +573,107 @@ private fun HideScopeCard(vm: HfwViewModel, app: AppItem, onToggleHide: (Boolean
     val on = mask != 0
     val count = Integer.bitCount(mask and H.ALL)
     var expanded by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
-    ActionCard(
-        icon = if (on) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
-        title = stringResource(R.string.action_hide),
-        subtitle = when {
-            !on -> stringResource(R.string.action_hide_off)
-            custom -> stringResource(R.string.scope_tap_custom, count, 7)
-            else -> stringResource(R.string.scope_tap_customize, count, 7)
-        },
-        onClick = { expanded = !expanded },
-        trailing = { Switch(checked = on, onCheckedChange = onToggleHide) },
+    val arrow by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = androidx.compose.animation.core.tween(260, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+        label = "hideArrow",
     )
-    androidx.compose.animation.AnimatedVisibility(visible = expanded) {
+    class Place(val flag: Int, val icon: ImageVector, val title: Int, val sub: Int)
+    val places = listOf(
+        Place(H.LAUNCHER, Icons.Rounded.Home, R.string.scope_launcher, R.string.scope_launcher_sub),
+        Place(H.SUGGESTIONS, Icons.Rounded.Search, R.string.scope_suggestions, R.string.scope_suggestions_sub),
+        Place(H.SHORTCUT_CONFIGS, Icons.Rounded.Tune, R.string.scope_shortcut_configs, R.string.scope_shortcut_configs_sub),
+        Place(H.SHORTCUTS, Icons.Rounded.Bolt, R.string.scope_shortcuts, R.string.scope_shortcuts_sub),
+        Place(H.INTENT_CHOOSER, Icons.AutoMirrored.Rounded.OpenInNew, R.string.scope_chooser, R.string.scope_chooser_sub),
+        Place(H.SHARE_TARGETS, Icons.Rounded.Share, R.string.scope_share_targets, R.string.scope_share_targets_sub),
+        Place(H.WIDGETS, Icons.Rounded.Widgets, R.string.scope_widgets, R.string.scope_widgets_sub),
+    )
+    Surface(shape = RoundedCornerShape(28.dp), color = scheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth()) {
         Column {
-            Spacer(Modifier.height(10.dp))
-            class Place(val flag: Int, val icon: ImageVector, val title: Int, val sub: Int)
-            val places = listOf(
-                Place(H.LAUNCHER, Icons.Rounded.Home, R.string.scope_launcher, R.string.scope_launcher_sub),
-                Place(H.SUGGESTIONS, Icons.Rounded.Search, R.string.scope_suggestions, R.string.scope_suggestions_sub),
-                Place(H.SHORTCUT_CONFIGS, Icons.Rounded.Tune, R.string.scope_shortcut_configs, R.string.scope_shortcut_configs_sub),
-                Place(H.SHORTCUTS, Icons.Rounded.Bolt, R.string.scope_shortcuts, R.string.scope_shortcuts_sub),
-                Place(H.INTENT_CHOOSER, Icons.AutoMirrored.Rounded.OpenInNew, R.string.scope_chooser, R.string.scope_chooser_sub),
-                Place(H.SHARE_TARGETS, Icons.Rounded.Share, R.string.scope_share_targets, R.string.scope_share_targets_sub),
-                Place(H.WIDGETS, Icons.Rounded.Widgets, R.string.scope_widgets, R.string.scope_widgets_sub),
-            )
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                places.forEachIndexed { i, pl ->
-                    val checked = (mask and pl.flag) != 0
-                    Surface(
-                        onClick = { vm.toggleHideScope(app, pl.flag) },
-                        shape = dev.hfw.ui.components.segmentShape(i, places.size, big = 28.dp, small = 8.dp),
-                        color = scheme.surfaceContainerHigh,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
+            Row(
+                Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ShapedIcon(
+                    icon = if (on) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                    background = scheme.primaryContainer,
+                    tint = scheme.onPrimaryContainer,
+                    size = 52.dp,
+                    shape = RoundedCornerShape(18.dp),
+                )
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.action_hide), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = when {
+                            !on -> stringResource(R.string.action_hide_off)
+                            custom -> stringResource(R.string.scope_tap_custom, count, 7)
+                            else -> stringResource(R.string.scope_tap_customize, count, 7)
+                        },
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, fontWeight = FontWeight.Light),
+                        color = scheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Switch(checked = on, onCheckedChange = onToggleHide)
+            }
+            // Arrow on the card's bottom edge: down while closed, up while open.
+            Box(Modifier.fillMaxWidth().height(28.dp).clickable { expanded = !expanded }, contentAlignment = Alignment.Center) {
+                Icon(
+                    Icons.Rounded.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = scheme.onSurfaceVariant,
+                    modifier = Modifier.graphicsLayer { rotationZ = arrow },
+                )
+            }
+            androidx.compose.animation.AnimatedVisibility(
+                visible = expanded,
+                enter = androidx.compose.animation.expandVertically(
+                    animationSpec = androidx.compose.animation.core.tween(260, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                    expandFrom = Alignment.Top,
+                ) + androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(200)),
+                exit = androidx.compose.animation.shrinkVertically(
+                    animationSpec = androidx.compose.animation.core.tween(220, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                    shrinkTowards = Alignment.Top,
+                ) + androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(140)),
+            ) {
+                Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
+                    places.forEachIndexed { i, pl ->
+                        val checked = (mask and pl.flag) != 0
+                        val reveal by androidx.compose.animation.core.animateFloatAsState(
+                            targetValue = if (expanded) 1f else 0f,
+                            animationSpec = androidx.compose.animation.core.tween(
+                                durationMillis = 240,
+                                delayMillis = if (expanded) 60 + i * 40 else 0,
+                                easing = androidx.compose.animation.core.FastOutSlowInEasing,
+                            ),
+                            label = "hideRow$i",
+                        )
                         Row(
-                            Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                            Modifier
+                                .fillMaxWidth()
+                                .graphicsLayer {
+                                    alpha = reveal
+                                    translationY = -(1f - reveal) * 14.dp.toPx()
+                                }
+                                .clip(RoundedCornerShape(18.dp))
+                                .clickable { vm.toggleHideScope(app, pl.flag) }
+                                .padding(horizontal = 8.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Icon(pl.icon, contentDescription = null, tint = if (checked) scheme.primary else scheme.onSurfaceVariant)
                             Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
                                 Text(stringResource(pl.title), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-                                Text(
-                                    stringResource(pl.sub),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = scheme.onSurfaceVariant,
-                                )
+                                Text(stringResource(pl.sub), style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
                             }
                             Switch(checked = checked, onCheckedChange = { vm.toggleHideScope(app, pl.flag) })
                         }
                     }
-                }
-            }
-            if (custom) {
-                androidx.compose.material3.TextButton(onClick = { vm.setHideScope(app, null) }) {
-                    Text(stringResource(R.string.scope_reset))
+                    if (custom) {
+                        androidx.compose.material3.TextButton(onClick = { vm.setHideScope(app, null) }) {
+                            Text(stringResource(R.string.scope_reset))
+                        }
+                    }
                 }
             }
         }
